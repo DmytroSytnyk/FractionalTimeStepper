@@ -12,7 +12,7 @@ sys.path.append("/home/khristen/Projects/FDE/code/")
 from source.Models.DiffusionModel1D import DiffusionModel1D
 from source.Models.SimpleScalarModel import SimpleScalarModel
 from source.TimeStepper import FracTS_RA, FracTS_L1, FracTS_GJ
-from source.MittagLeffler import ml ### Load some Mittag-Leffler function computation code
+from source.MittagLeffler import ml ### Load some Mittag-Leffler function computation code, e.g., see https://github.com/khinsen/mittag-leffler
 
 ####################################
 #           Parameters
