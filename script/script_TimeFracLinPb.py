@@ -8,6 +8,7 @@ from time import time
 
 import sys
 sys.path.append("/home/khristen/Projects/FDE/code/")
+sys.path.append("/home/ustim/Projects/CODES/FDE/fde_code_github")
 
 from source.Models.DiffusionModel1D import DiffusionModel1D
 from source.Models.SimpleScalarModel import SimpleScalarModel
@@ -18,17 +19,17 @@ from source.MittagLeffler import ml ### Load some Mittag-Leffler function comput
 #           Parameters
 ####################################
 
-model_type = 'scalar' #'diffusion1d' # 'scalar', 'diffusion1d'
+model_type = 'diffusion1d' #'diffusion1d' # 'scalar', 'diffusion1d'
 
 def src(t,x):
     return np.exp(alpha*t)
 
 config = {
-    'FinalTime'     :   10,
+    'FinalTime'     :   1,
     'stiff'         :   1,
     'BC'            :   ['Dirichlet', '0'],
     'source'        :   '0',
-    'shape'         :   [5000], ### domain shape
+    'shape'         :   [1000], ### domain shape
     'nSupportPoints':   100,
     'tol'           :   1.e-13,
     'verbose'       :   False,
@@ -52,13 +53,13 @@ IMPORT_PATH = '/home/khristen/Projects/FDE/code/data/RA/Heat/'
 EXPORT_PATH = '/home/khristen/Projects/FDE/code/data/RA/Heat/'
 fg_EXPORT = False
 
-ls_ALPHAS  = [0.5, 0.8] #[1, 0.8, 0.5, 0.3, 0.1, 0.03, 0.01]
-ls_NITER   = [100*int(2**l) for l in range(3,4)]
-ls_SCHEMES = ['GJ:CN'] #['RA:mCN']  ### Format "XX:Y..Y"; XX = RA / L1 / GJ; for RA: Y..Y = mIE - modified Implicit Euler (theta=1), mCN - modified Crank-Nicolson
+ls_ALPHAS  = [0.001] #[1, 0.8, 0.5, 0.3, 0.1, 0.03, 0.01]
+ls_NITER   = [1000000] #[100*int(2**l) for l in (4,5,6,7)]
+ls_SCHEMES = ['RA:mCN'] #['RA:mCN']  ### Format "XX:Y..Y"; XX = RA / L1 / GJ; for RA: Y..Y = mIE - modified Implicit Euler (theta=1), mCN - modified Crank-Nicolson
 
 verbose = False
 doPlots = False ### plot solution ("diffusion2d" only) for each case (for testing, by defaut False)
-doPlots_err = True ### plot error evolution in time
+doPlots_err = False ### plot error evolution in time
 doPlots_modes = False
 err_analysis  = False
 
@@ -83,8 +84,8 @@ def normT(u):
     # return np.linalg.norm(u, ord=np.Inf)
     # n = len(u)//3
     # return np.linalg.norm(u[n:], ord=2)
-    return np.abs(u[-1])
-    # return normT_weighted(u)
+    # return np.abs(u[-1])
+    return normT_weighted(u)
 
 
 ####################################

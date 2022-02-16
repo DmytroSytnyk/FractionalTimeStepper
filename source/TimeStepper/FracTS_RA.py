@@ -84,7 +84,7 @@ class FracTS_RA(BasicTS):
         else:
             raise Exception('Unknown numerical scheme !')
 
-        print('SUM GAMMA_k = ', np.sum(self.gamma_k))
+        # print('SUM GAMMA_k = ', np.sum(self.gamma_k))
 
         self.gamma_k = np.insert(self.gamma_k, 0, 1)
         self.beta1_k = np.insert(self.beta1_k, 0, 0)

@@ -5,6 +5,7 @@ from scipy.optimize import fsolve, minimize, fminbound, root
 from scipy.signal import residue, residuez, tf2zpk, zpk2tf
 from scipy.special import gamma, gammaincc, hyperu
 import scipy
+import scipy.integrate
 import matplotlib.pyplot as plt
 from time import time
 
@@ -129,9 +130,14 @@ class RationalApproximation_AAA(BasicRationalApproximation):
     #------------------------------
     
     def set_Support(self, **kwargs):
+        fg_Reciprocal = kwargs.get('fg_Reciprocal', True)
+        self.fg_Reciprocal = fg_Reciprocal
 
         ### TARGET FUNCTION !!!
-        self.target_func = lambda x: x**self.alpha
+        if fg_Reciprocal:
+            self.target_func = lambda x: x**self.alpha
+        else:
+            self.target_func = lambda x: x**(-self.alpha)
 
         ### Support points
         if  'SupportPoints' in kwargs.keys():
@@ -144,7 +150,10 @@ class RationalApproximation_AAA(BasicRationalApproximation):
             self.Zmax = kwargs.get('Zmax', 1.e3)
             assert(self.Zmin<self.Zmax)
             self.nSupportPoints = kwargs.get('nSupportPoints', 100)
-            self.SupportPoints  = np.geomspace(1/self.Zmax, 1/self.Zmin, self.nSupportPoints)
+            if fg_Reciprocal:
+                self.SupportPoints  = np.geomspace(1/self.Zmax, 1/self.Zmin, self.nSupportPoints)
+            else:
+                self.SupportPoints  = np.geomspace(self.Zmax, self.Zmin, self.nSupportPoints)
             # self.SupportPoints  = 1/self.Zmax + (1/self.Zmin-1/self.Zmax)*np.linspace(0, 1, self.nSupportPoints)**5
 
         ### Maximal polynomial degree
@@ -253,8 +262,9 @@ class RationalApproximation_AAA(BasicRationalApproximation):
         P, Q = zpk2tf(zer, pol, a)
     
         ### Invertion
-        P = P[::-1]
-        Q = Q[::-1]
+        if self.fg_Reciprocal:
+            P = P[::-1]
+            Q = Q[::-1]
         if P[0]>0:
             a = P[0]/Q[0]
             P /= P[0]
@@ -384,12 +394,13 @@ if __name__ == "__main__":
 
     import sys
     sys.path.append("/home/khristen/Projects/FDE/code/source/")
+    sys.path.append("/home/ustim/Projects/CODES/FDE/fde_code_github/source")
     from MittagLeffler import ml
 
-    alpha = 0.01
+    alpha = 0.999
     nu = alpha
     T  = 1
-    dt = 1.e-6
+    dt = 1.e-5
     Zmin, Zmax = 1/T, 1/dt
     tol = 1.e-12
     nNodes = 100
@@ -398,10 +409,11 @@ if __name__ == "__main__":
     RA = RationalApproximation_AAA( alpha=alpha,
                                     tol=tol, nSupportPoints=nNodes,
                                     Zmin= Zmin, Zmax= Zmax,
-                                    verbose=verbose)
+                                    verbose=verbose,
+                                    fg_Reciprocal=False)
     c, d = RA.c, RA.d
 
-    x = np.geomspace(1.e-4, 1/dt, 1000)
+    x = np.geomspace(1.e-12, 1/dt, 1000)
 
     plt.figure('Error')
     y_r = [ RA.err(z) for z in 1/T + x]
@@ -414,7 +426,7 @@ if __name__ == "__main__":
     plt.xscale('log')
     plt.legend()
 
-    x = np.geomspace(dt, T, 10000)
+    x = np.geomspace(dt, 1.e-3, 10000)
     y_ex = np.array([ RA.func_ker(z) for z in x])
     y_ra = np.array([ RA.appx_ker(z) for z in x])
 
@@ -430,5 +442,8 @@ if __name__ == "__main__":
     plt.figure('Kernel error')
     plt.plot(x,np.abs(y_ex-y_ra),'b-')
     plt.xscale('log')
+
+    E = np.trapz(np.abs(y_ex-y_ra), x=x)
+    print(E)
 
     plt.show()

@@ -83,7 +83,7 @@ class BasicModelFEM:
         ### Homogeneous Neumann is default BC
         BC = kwargs.get("BC", ['Neumann', '0'] )
 
-        if BC[0] is 'Dirichlet':
+        if BC[0] == 'Dirichlet':
             Value = dl.Expression(BC[1], degree=1, t=0)
             self.BC = dl.DirichletBC(self.Vh, Value, boundary)
         else:
