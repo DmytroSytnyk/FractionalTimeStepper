@@ -2,11 +2,9 @@ import random
 from dolfin import *
 import matplotlib.pyplot as plt
 import numpy as np
-
 import sys
-sys.path.append("./source/")
 
-from FractionalDerivative import FractionalDerivativeRA as FractionalDerivative
+from source.TimeStepper.FractionalDerivative import FractionalDerivativeRA as FractionalDerivative
 
 ###########################################
 

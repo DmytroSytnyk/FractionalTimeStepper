@@ -8,9 +8,7 @@ import copy
 from time import time
 import matplotlib.pyplot as plt
 from contextlib import suppress
-
-import sys
-sys.path.append("/home/khristen/Projects/FDE/code/")
+import os, sys
 
 from source.MittagLeffler import ml
 

@@ -5,9 +5,7 @@ from dolfin import *
 from tqdm import tqdm
 from copy import copy
 from scipy.special import gamma
-
 import sys, os
-sys.path.append("/home/khristen/Projects/FDE/code/source")
 
 from source.TimeStepper import FracTS_RA, FracTS_L1
 

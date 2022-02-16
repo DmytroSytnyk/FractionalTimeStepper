@@ -9,7 +9,6 @@ from time import time
 from tqdm import tqdm
 
 import sys
-sys.path.append("/home/khristen/Projects/FDE/code/")
 
 from source.Models.CahnHilliardModel import CahnHilliard, InitialConditions
 from source.TimeStepper.FractionalDerivative import FractionalDerivativeRA, FractionalDerivativeL1
@@ -52,7 +51,7 @@ niter_list = [(10**k) for k in range(2,3)]
 
 ### Reference solution
 if doRef:
-    path = '/home/khristen/Projects/FractionalTimeSolver/FracTS/code/data/CahnHilliard/Reference_Solution/'
+    path = './CahnHilliard/Reference_Solution/'
     ref_solution = LoadData(path, ext='npy')
     N_ref = ref_solution.size-1
 

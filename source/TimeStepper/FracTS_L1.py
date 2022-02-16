@@ -173,7 +173,7 @@ class FracTS_L1(BasicTS):
         self.b = np.append(self.b, bj)
         coefs = np.append(-np.diff(self.b)/self.b[0], self.b[-1]/self.b[0])[::-1]
 
-        HistSolNew      = self.Model.multMass(self.CurrSol).copy(True) 
+        HistSolNew      = self.Model.multMass(self.CurrSol).copy() 
         self.HistSol    = np.hstack([ self.HistSol,  HistSolNew.reshape([-1,1])])
         self.History[:] = self.HistSol @ coefs
 

@@ -4,7 +4,6 @@ import re
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 from PIL import Image
-from utilities.Exports import exportVTK
 
 ################################
 

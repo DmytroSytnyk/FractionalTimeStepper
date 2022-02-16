@@ -5,10 +5,17 @@ import dolfin as dl
 from scipy.special import gamma
 import matplotlib.pyplot as plt
 from time import time
+import sys, os
 
-import sys
-sys.path.append("/home/khristen/Projects/FDE/code/")
-sys.path.append("/home/ustim/Projects/CODES/FDE/fde_code_github")
+###=============================================
+### Import from source
+
+SOURCEPATH = os.path.abspath(__file__)
+for i in range(10):
+    basename   = os.path.basename(SOURCEPATH)
+    SOURCEPATH = os.path.dirname(SOURCEPATH)
+    if basename == "script": break
+sys.path.append(SOURCEPATH)
 
 from source.Models.DiffusionModel1D import DiffusionModel1D
 from source.Models.SimpleScalarModel import SimpleScalarModel
@@ -19,7 +26,7 @@ from source.MittagLeffler import ml ### Load some Mittag-Leffler function comput
 #           Parameters
 ####################################
 
-model_type = 'diffusion1d' #'diffusion1d' # 'scalar', 'diffusion1d'
+model_type = 'scalar' # 'scalar', 'diffusion1d'
 
 def src(t,x):
     return np.exp(alpha*t)
@@ -29,12 +36,10 @@ config = {
     'stiff'         :   1,
     'BC'            :   ['Dirichlet', '0'],
     'source'        :   '0',
-    'shape'         :   [1000], ### domain shape
+    'shape'         :   [5000], ### domain shape
     'nSupportPoints':   100,
     'tol'           :   1.e-13,
     'verbose'       :   False,
-    'correction'    :   False,
-    'quad'          :   'GJL',
 }
 
 if model_type == 'scalar':
@@ -49,16 +54,16 @@ else:
 
 
 
-IMPORT_PATH = '/home/khristen/Projects/FDE/code/data/RA/Heat/'
-EXPORT_PATH = '/home/khristen/Projects/FDE/code/data/RA/Heat/'
+IMPORT_PATH = './'
+EXPORT_PATH = './'
 fg_EXPORT = False
 
-ls_ALPHAS  = [0.001] #[1, 0.8, 0.5, 0.3, 0.1, 0.03, 0.01]
-ls_NITER   = [1000000] #[100*int(2**l) for l in (4,5,6,7)]
+ls_ALPHAS  = [0.4] #[1, 0.8, 0.5, 0.3, 0.1, 0.03, 0.01]
+ls_NITER   = [100*int(2**l) for l in range(5)]
 ls_SCHEMES = ['RA:mCN'] #['RA:mCN']  ### Format "XX:Y..Y"; XX = RA / L1 / GJ; for RA: Y..Y = mIE - modified Implicit Euler (theta=1), mCN - modified Crank-Nicolson
 
 verbose = False
-doPlots = False ### plot solution ("diffusion2d" only) for each case (for testing, by defaut False)
+doPlots = False ### plot solution ("diffusion1d" only) for each case (for testing, by defaut False)
 doPlots_err = False ### plot error evolution in time
 doPlots_modes = False
 err_analysis  = False
@@ -68,8 +73,6 @@ err_analysis  = False
 
 u_init = mdl.ArrInitSol
 
-# def norm(u):
-#     return np.linalg.norm(u, ord=2)
 
 def normH(u):
     # return np.linalg.norm(u, ord=2)
@@ -145,14 +148,14 @@ for scheme in ls_SCHEMES:
             ### Time integration
             for i, u in enumerate(AppxSolution):
                 u_ref = ExactSolution[i]
-                norm_ref[i] = normH(u_ref-u_init)
-                norm_RA[i]  = normH(u-u_init)
+                norm_ref[i] = normH(u_ref)
+                norm_RA[i]  = normH(u)
                 err_RA[i]   = normH(u-u_ref)
 
 
                 if doPlots:
                     fig = plt.figure('Evolution')
-                    # plt.cla()
+                    plt.cla()
                     plt.ylim((-0.01, pb.InitSol.max() + 0.01))
                     plt.grid()
                     x = pb.grid_space[0]
@@ -160,8 +163,8 @@ for scheme in ls_SCHEMES:
                     plt.plot(x, u_ref, 'r--')
                     plt.xlabel('x')
                     plt.ylabel('u')
-                    # plt.legend(['RA', 'Ref'])
-                    # plt.title('Time: {0:f} s'.format(pb.CurrTime))
+                    plt.legend(['RA', 'Ref'])
+                    plt.title('Time: {0:f} s'.format(pb.CurrTime))
                     fig.canvas.draw()
                     plt.pause(0.01)
                     plt.waitforbuttonpress()
@@ -185,7 +188,6 @@ for scheme in ls_SCHEMES:
                 plt.xlabel('time, [s]')
                 plt.ylabel('relative error, (l2 in space)')
                 plt.yscale('log')
-                plt.plot(t[1:], 1.e-4*t[1:]**(alpha-1),'grey')
                 plt.subplot(1,2,2)
                 plt.plot(t[1:], norm_RA[1:],'bo-')
                 plt.plot(t[1:], norm_ref[1:],'ro--')
@@ -224,7 +226,7 @@ for scheme in ls_SCHEMES:
             raise Exception('Unknown scheme')
         ls_slope = (ls_err[0]/ls_slope[0]) * ls_slope
 
-        ### Export to the draft
+        ### Export the data
         if fg_EXPORT:
             output = np.array([ls_dt[::-1], ls_err[::-1], ls_slope[::-1]]).T
             np.savetxt(EXPORT_PATH + 'data_Heat_Convergence_alpha_{0:d}_{1}'.format(int(100*alpha), scheme), output)

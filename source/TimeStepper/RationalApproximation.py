@@ -392,17 +392,15 @@ class RationalApproximation_AAA(BasicRationalApproximation):
 
 if __name__ == "__main__":
 
-    import sys
-    sys.path.append("/home/khristen/Projects/FDE/code/source/")
-    sys.path.append("/home/ustim/Projects/CODES/FDE/fde_code_github/source")
+    import sys, os
     from MittagLeffler import ml
 
-    alpha = 0.999
+    alpha = 0.9
     nu = alpha
     T  = 1
     dt = 1.e-5
     Zmin, Zmax = 1/T, 1/dt
-    tol = 1.e-12
+    tol = 1.e-13
     nNodes = 100
     verbose = False
 

@@ -8,10 +8,9 @@ from time import time
 from tqdm import tqdm
 
 import sys
-sys.path.append("/home/khristen/Projects/FractionalTimeSolver/FracTS/code/source/")
 
-from Models.CahnHilliardModel import CahnHilliard, InitialConditions
-from FractionalDerivative import FractionalDerivativeL1 as FractionalDerivative
+from source.Models.CahnHilliardModel import CahnHilliard, InitialConditions
+from source.TimeStepper.FractionalDerivative import FractionalDerivativeL1 as FractionalDerivative
 
 
 
@@ -52,7 +51,7 @@ config = {
 # N = config['nTimeSteps']
 # dt = T/N
 
-ResultsFolder = '/home/khristen/Projects/FractionalTimeSolver/FracTS/code/data/CahnHilliard/Reference_Solution/'
+ResultsFolder = './CahnHilliard/Reference_Solution/'
 config['OutputFile'] = ResultsFolder + 'ReferenceSolution.pvd'
 # config['OutputFile'] = 'ReferenceSolution_a={0:.3f}_T={1:f}_dt={2:f}.pvd'.format(alpha, T, dt)
 
