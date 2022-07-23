@@ -1,0 +1,3 @@
+[submodule "source/contrib/MittagLeffler"]
+	path = source/contrib/MittagLeffler
+	url = https://github.com/khinsen/mittag-leffler

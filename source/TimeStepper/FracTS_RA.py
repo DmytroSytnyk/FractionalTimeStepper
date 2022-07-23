@@ -11,10 +11,12 @@ import matplotlib.pyplot as plt
 
 import sys
 sys.path.append("..")
+#sys.path.append(os.path.join("..","contrib","MittagLeffler"))
 
 from .BasicTS import BasicTS
 from .RationalApproximation import RationalApproximation_AAA as RationalApproximation
-from ..MittagLeffler import ml
+from ..contrib.MittagLeffler.mittag_leffler import ml
+#from mittag_leffler import ml
 
 
 

@@ -3,7 +3,7 @@ from math import *
 import numpy as np
 import dolfin as dl
 from scipy import optimize
-from RationalApproximation import RationalApproximation_AAA
+from .RationalApproximation import RationalApproximation_AAA
 from time import time
 import matplotlib.pyplot as plt
 

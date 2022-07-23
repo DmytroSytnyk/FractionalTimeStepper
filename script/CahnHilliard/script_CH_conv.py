@@ -12,7 +12,8 @@ import sys
 
 from source.Models.CahnHilliardModel import CahnHilliard, InitialConditions
 from source.TimeStepper.FractionalDerivative import FractionalDerivativeRA, FractionalDerivativeL1
-from .LoadData import LoadData
+from LoadData import LoadData
+#from script.CahnHilliard.LoadData import LoadData
 
 ####################################
 #           Parameters
