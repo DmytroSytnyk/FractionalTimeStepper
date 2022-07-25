@@ -1,9 +1,5 @@
 
-from cProfile import label
-from math import *
 import numpy as np
-import dolfin as dl
-from scipy.special import gamma
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 from time import time
