@@ -13,7 +13,7 @@ import matplotlib.pyplot as plt
 
 #############################################################################################
 #
-#   Basic Time-Stepper class
+#   Basic Time-Stepper class (obsolete)
 #
 #############################################################################################
 
@@ -93,7 +93,6 @@ class FractionalDerivativeRA: #(BasicTS):
         print('=================================')
         print('alpha:  ', self.alpha)
         print('Scheme: ', self.Scheme)
-        print('Method: ', self.Method)
         print('Number modes:      ', self.nModes)
         print('Number time-steps: ', self.TS.nTimeSteps)
         print()
@@ -132,10 +131,9 @@ class FractionalDerivativeRA: #(BasicTS):
         SpectrumInterval = kwargs.get("SpectrumInterval", [1/T, 1/h])
         Zmin, Zmax = SpectrumInterval
 
-        self.RA = RationalApproximation_AAA(    self.alpha,
-                                                tol=tol, nNodes=nNodes,
+        self.RA = RationalApproximation_AAA(    **kwargs,
                                                 Zmin= Zmin, Zmax= Zmax,
-                                                Method=self.Method)
+                                                fg_Reciprocal=True)
         self.c, self.d = self.RA.c, self.RA.d
         
 
