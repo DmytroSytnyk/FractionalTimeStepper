@@ -78,7 +78,7 @@ class BasicRationalApproximation:
         y_apx_ker = self.appx_ker(t)
         err_ker   = self.err_ker(t)
         
-        plt.figure()
+        plt.figure("Check rational approximation")
         plt.subplot(2,2,1)
         plt.plot(z_im,err)
         plt.title('Spectral error')

@@ -29,13 +29,13 @@ from source.MittagLeffler import ml ### Load some Mittag-Leffler function comput
 model_type = 'diffusion1d' # 'scalar', 'diffusion1d'
 
 config = {
-    'alpha'         :   0.5,
+    'alpha'         :   0.999,
     'nTimeSteps'    :   100,
     'FinalTime'     :   1,
     'stiff'         :   1,
     'BC'            :   ['Dirichlet', '0'],
     'source'        :   '0',
-    'shape'         :   [5000], ### spacial domain discretization
+    'shape'         :   [1000], ### spacial domain discretization
     'nSupportPoints':   100,    ### AAA candidate points
     'tol'           :   1.e-13, ### AAA accuracy
     'verbose'       :   False,
@@ -61,6 +61,7 @@ u_init = mdl.ArrInitSol
 def normH(u):
     return mdl.norm(u)
 
+alpha = config["alpha"]
 def normT_weighted(u):
     t = np.arange(len(u))
     return np.linalg.norm(u * t**(1-alpha), ord=2)

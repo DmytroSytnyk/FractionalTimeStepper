@@ -48,8 +48,9 @@ class BasicModelFEM:
 
         ### Finite elements spaces
         self.FE_degree = kwargs.get("FE_degree", 1)
-        FE = dl.FiniteElement("Lagrange", self.mesh.ufl_cell(), self.FE_degree)
-        self.Vh = dl.FunctionSpace(self.mesh, FE)
+        # FE = dl.FiniteElement("Lagrange", self.mesh.ufl_cell(), self.FE_degree)
+        # self.Vh = dl.FunctionSpace(self.mesh, FE)
+        self.Vh = dl.FunctionSpace(self.mesh, "CG", 1)
         
         ### Vertices to (dolfin) dofs map
         self.v2d = dl.vertex_to_dof_map(self.Vh)

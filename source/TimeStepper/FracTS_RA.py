@@ -89,24 +89,10 @@ class FracTS_RA(BasicTS):
         self.beta2 = np.sum(self.beta2_k)
         self.beta  = self.beta1 + self.beta2
 
-        if scheme_subtype == 'mCN':
-            self.beta1 = self.beta1 + self.beta2
-            self.beta2 = 0
+        # if scheme_subtype == 'mCN':
+        #     self.beta1 = self.beta1 + self.beta2
+        #     self.beta2 = 0
 
-        ### Initial step (correction term)
-        if self.fg_CorrectionTerm:
-            h1 = h
-            self.beta_ini  = np.sum(c/d*(1-np.exp(-d/h1*h))) * h1**self.alpha + c_inf * h1**self.alpha
-
-            self.beta1_ini = np.sum(c/d**2 *(np.exp(-d) - 1 + d)) * h**self.alpha + c_inf * h**self.alpha
-            self.beta2_ini = np.sum(c/d**2 *(1-(1+d)*np.exp(-d))) * h**self.alpha
-
-            self.beta1_ini = c_inf * h**self.alpha
-            self.beta2_ini = np.sum(c/d*(1-np.exp(-d))) * h**self.alpha
-
-            self.beta1_k_ini = c/d**2 *(np.exp(-d) - 1 + d) * h**self.alpha
-            self.beta2_k_ini = c/d**2 *(1-(1+d)*np.exp(-d)) * h**self.alpha
-            pass
 
     def compute_AdamsMoultonCoefficients(self):
         alpha, h = self.alpha, self.dt
@@ -212,9 +198,7 @@ class FracTS_RA(BasicTS):
         if self.Model.MatrixUpdate:
             M = self.Model.MassMatrix
             K = self.Model.StiffMatrix
-            A = M + (self.beta1)*K
-            if self.fg_CorrectionTerm and self.TimeStep == 1:
-                A = M + self.beta1_ini*K          
+            A = M + self.beta1*K
 
             if self.verbose:
                 print('betas:', self.beta1, self.beta2)
@@ -225,8 +209,18 @@ class FracTS_RA(BasicTS):
         else:
             A = None
 
-        self.Residual[:] = -self.beta2*self.PrevF + self.History
+        if hasattr(self.Model, "source"):            
+            t = self.CurrTime
+            f = self.Model.source(t)
+        else:
+            f = 0
+
+        self.Residual[:] = self.beta1*f - self.beta2*self.PrevF + self.History
         self.CurrSol[:]  = self.LSolve(A, self.CurrSol, self.Residual)
+
+        # self.Residual[:] = M*self.CurrSol + self.beta1*self.CurrF + self.beta2*self.PrevF - self.History
+        # self.CurrSol[:] -= self.LSolve(A, 0*self.CurrSol, self.Residual)
+        # self.CurrF[:]    = self.Model.update_NonLinearPart(self.CurrSol, time=self.CurrTime)
         
         self.NLIter += 1
 

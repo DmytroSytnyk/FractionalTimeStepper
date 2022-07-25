@@ -19,6 +19,7 @@ sys.path.append(SOURCEPATH)
 
 from source.Models.DiffusionModel1D import DiffusionModel1D
 from source.Models.SimpleScalarModel import SimpleScalarModel
+from source.Models.SimpleScalarModel_sourceterm import SimpleScalarModel_sourceterm
 from source.TimeStepper import FracTS_RA, FracTS_L1, FracTS_GJ
 from source.MittagLeffler import ml ### Load some Mittag-Leffler function computation code, e.g., see https://github.com/khinsen/mittag-leffler
 
@@ -26,7 +27,7 @@ from source.MittagLeffler import ml ### Load some Mittag-Leffler function comput
 #           Parameters
 ####################################
 
-model_type = 'scalar' # 'scalar', 'diffusion1d'
+model_type = 'diffusion1d' # 'scalar', 'diffusion1d'
 
 def src(t,x):
     return np.exp(alpha*t)
@@ -34,17 +35,21 @@ def src(t,x):
 config = {
     'FinalTime'     :   1,
     'stiff'         :   1,
-    'BC'            :   ['Dirichlet', '0'],
+    # 'BC'            :   ['Dirichlet', '0'],
     'source'        :   '0',
-    'shape'         :   [5000], ### domain shape
+    'shape'         :   [1000], ### domain shape
     'nSupportPoints':   100,
     'tol'           :   1.e-13,
     'verbose'       :   False,
+    'source_powers' :   np.array([3]),
+    'source_coefs'  :   np.array([1]),
 }
 
 if model_type == 'scalar':
-    config['IC'] = 1
-    mdl = SimpleScalarModel(**config)
+    # config['IC'] = 1
+    # mdl = SimpleScalarModel(**config)
+    config['IC'] = 0
+    mdl = SimpleScalarModel_sourceterm(**config)
 elif model_type == 'diffusion1d':
     config['IC'] = 'sin(pi*x[0])'
     mdl = DiffusionModel1D(**config)
@@ -58,13 +63,13 @@ IMPORT_PATH = './'
 EXPORT_PATH = './'
 fg_EXPORT = False
 
-ls_ALPHAS  = [0.4] #[1, 0.8, 0.5, 0.3, 0.1, 0.03, 0.01]
+ls_ALPHAS  = [0.99]
 ls_NITER   = [100*int(2**l) for l in range(5)]
 ls_SCHEMES = ['RA:mCN'] #['RA:mCN']  ### Format "XX:Y..Y"; XX = RA / L1 / GJ; for RA: Y..Y = mIE - modified Implicit Euler (theta=1), mCN - modified Crank-Nicolson
 
 verbose = False
 doPlots = False ### plot solution ("diffusion1d" only) for each case (for testing, by defaut False)
-doPlots_err = False ### plot error evolution in time
+doPlots_err = True ### plot error evolution in time
 doPlots_modes = False
 err_analysis  = False
 
@@ -183,7 +188,7 @@ for scheme in ls_SCHEMES:
                 t = np.arange(nIter+1)*pb.dt
                 plt.figure('Error, dt={0:.2e}'.format(pb.dt))
                 plt.subplot(1,2,1)
-                plt.plot(t[1:], err_RA[1:]/norm_ref[1:],'bo-')
+                plt.plot(t[1:], err_RA[1:],'bo-')
                 plt.legend(['RA'])
                 plt.xlabel('time, [s]')
                 plt.ylabel('relative error, (l2 in space)')
@@ -214,7 +219,7 @@ for scheme in ls_SCHEMES:
             ls_slope = np.array([h**(1) for h in ls_dt])
             label_slope = r'$h^1$'
         elif scheme[3:] == 'mCN':
-            ls_slope = np.array([h**(1+alpha) for h in ls_dt])
+            ls_slope = np.array([h**2 for h in ls_dt])
             label_slope = r'$h^{1+\alpha}$'
         elif scheme[3:] == 'CN':
             ls_slope = np.array([h**(1+alpha) for h in ls_dt])

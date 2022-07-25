@@ -45,6 +45,10 @@ class BasicTS:
             self.LSolve  = self.Model.LSolve or self.set_linSolver()        
             self.MatrixUpdate = self.Model.MatrixUpdate or False if hasattr(self.Model, 'MatrixUpdate') else False
 
+    def set_alpha(self, alpha):
+        assert(alpha>=0 and alpha<=1)
+        self.alpha = alpha
+        self.Model.alpha = alpha
 
     #----------------------------------------------------------------------------------------
     #   Set Time-Stepper options
