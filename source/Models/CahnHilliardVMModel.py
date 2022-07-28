@@ -11,10 +11,23 @@ from source.TimeStepper import FracTS_RA, FracTS_L1
 
 
 ###########################################
+# Change log levele for FEniCS
 
+import logging
+ffc_logger = logging.getLogger('FFC')
+print('Change FFC log level to Warning')
+print('Log level was:', logging.getLevelName(ffc_logger.getEffectiveLevel()))
+ffc_logger.setLevel(logging.WARNING)
+print('Log level is now:', logging.getLevelName(ffc_logger.getEffectiveLevel()))
+###########################################
+
+###########################################
 # Form compiler options
+# are supposed to be defined in the caller script
+
 parameters["form_compiler"]["optimize"]     = True
 parameters["form_compiler"]["cpp_optimize"] = True
+parameters["form_compiler"]["cpp_optimize_flags"] = "-O3 -ffast-math -march=native"
 
 ###########################################
 
@@ -85,7 +98,7 @@ class IC_FourBubbles(UserExpression):
 ###########################################
 
 
-class CahnHilliard(NonlinearProblem):
+class CahnHilliardVM(NonlinearProblem):
 
     def __init__(self, **kwargs):
         NonlinearProblem.__init__(self)
@@ -94,7 +107,7 @@ class CahnHilliard(NonlinearProblem):
         set_log_active(self.verbose)
         # set_log_level(40)
 
-        ### Spatial dimension
+        ### Spacial dimension
         self.ndim = kwargs.get('ndim', 2)
         
         ### Time-stepper
@@ -114,22 +127,28 @@ class CahnHilliard(NonlinearProblem):
 
         ### Chemical potential derivative
         if zeros==[0,1]:
-            Phi  = lambda x: 0.25 * x**2 * (1-x)**2
-            phi1 = kwargs.get('phi1', lambda x: 0.25 * (3 * x)               )  ### convex part
-            phi2 = kwargs.get('phi2', lambda x: 0.25 * (4*x*x*x - 6*x*x - x) )  ### concave part
+            Phi  = kwargs.get('Phi', lambda x: 0.25 * (1-x**2)**2)
+            phi1 = kwargs.get('phi1', lambda x: 0.25 * (3 * x)              )   ### convex part
+            phi2 = kwargs.get('phi2', lambda x: 0.25 * (4*x*x*x - 6*x*x - x))   ### concave part
         elif zeros==[-1,1]:
-            factor = 1
-            Phi  = lambda x: factor*0.25 * (1-x**2)**2
-            Phi1 = lambda x: factor*0.25 * (4*x**2 + 1)
-            Phi2 = lambda x: factor*0.25 * (x**4 - 6*x**2)
-            phi1 = kwargs.get('phi1', lambda x: factor*0.25 * (8 * x)          )  ### convex part
-            phi2 = kwargs.get('phi2', lambda x: factor*0.25 * (4*x**3 - 12*x) )  ### concave part
+            Phi  = kwargs.get('Phi', lambda x: 0.25 * (1-x**2)**2)
+            phi1 = kwargs.get('phi1', lambda x: 0.25 * (8 * x)        )  ### convex part
+            phi2 = kwargs.get('phi2', lambda x: 0.25 * (4*x**3 - 12*x))  ### concave part
         else:
             raise Exception('Dont know these zeros.')
-
+        if not callable(Phi):
+            Phi  = lambda x: Phi;
+        if not callable(phi1):
+            phi1 = lambda x: phi1;
+        if not callable(phi2):
+            phi2 = lambda x: phi2;
+        
         ### Mobility
-        M = kwargs.get('mobility', 1)
-        M = Constant(M)
+        _M = kwargs.get('mobility', lambda x: (1-x**2)**2)
+        if not callable(_M):
+            M = lambda x: _M;
+
+        ### Other parameters
         kappa = kwargs.get('kappa', 0)
         m     = kwargs.get('mean',  0)
         kappa, m = Constant(kappa), Constant(m)  
@@ -137,7 +156,7 @@ class CahnHilliard(NonlinearProblem):
         ### Mesh
         self.Nx   = kwargs.get('Nx', 2**5)    # number of grid points in space (one direction)
         self.ndim = kwargs.get('ndim', 2)
-        if self.ndim == 2:
+        if   self.ndim == 2:
             self.mesh = UnitSquareMesh.create(self.Nx, self.Nx, CellType.Type.quadrilateral)
         elif self.ndim == 3:
             self.mesh = UnitCubeMesh.create(self.Nx, self.Nx, self.Nx, CellType.Type.hexahedron)
@@ -201,7 +220,7 @@ class CahnHilliard(NonlinearProblem):
 
         if self.fg_LinearSolve:
             ###----------------------------
-            ### Linear case assemlage
+            ### Linear case assembly
             ###----------------------------
 
             self.set_LinSolver(**kwargs)
@@ -215,13 +234,13 @@ class CahnHilliard(NonlinearProblem):
             v1, v2  = TestFunctions(W)
 
 
-            K = u1*v1*dx + u2*v2*dx + (b1+b2)*dot(M*grad(u2), grad(v1))*dx - factor*2*u1*v2*dx - lmbda * dot(grad(u1), grad(v2))*dx + (b1+b2)*M*kappa*u1*v1*dx
+            K = u1*v1*dx + u2*v2*dx + (b1+b2)*dot(M(c)*grad(u2), grad(v1))*dx - 2*u1*v2*dx - lmbda * dot(grad(u1), grad(v2))*dx + (b1+b2)*M(c)*kappa*u1*v1*dx
             self.StiffnessMatrix = assemble(K)
             # self.LinSolver.set_operator(self.StiffnessMatrix)
             # self.LinSolverMu.set_operator(self.MassMatrixMu)
 
             # self._RHS = Constant(1/eps) * phi2(c0)*v2*dx
-            self._RHS = phi2(c0)*v2*dx + (b1+b2)*M*kappa*m*v1*dx
+            self._RHS = phi2(c0)*v2*dx + (b1+b2)*M(c)*kappa*m*v1*dx
 
 
             ### Init history term amd modes (in numpy vector terms)
@@ -235,7 +254,7 @@ class CahnHilliard(NonlinearProblem):
             self.Modes1     = np.zeros([len(self.dofmap1.dofs()), self.TS.nModes+1])
             self.Modes1[:,0]= self.Modes[:,0]   
 
-            self.DiffusionMatrix  = assemble(dot(M*grad(u1),grad(v1))*dx)
+            self.DiffusionMatrix  = assemble(dot(M(c)*grad(u1),grad(v1))*dx)
             self.MassMatrix2      = assemble(u2*v2*dx)
             if self.TS.Scheme == 'mIE':
                 self._Mmu  = (phi1(c) + phi2(c0))*v2*dx + lmbda * dot(grad(c), grad(v2))*dx
@@ -250,20 +269,20 @@ class CahnHilliard(NonlinearProblem):
             self.mu0.vector().set_local(self.mu.vector()[:])
             Mmu = assemble(self._Mmu)
             self.LinSolver2.solve(self.MassMatrix2, self.mu.vector(), Mmu)
-            self._CurrFlux = dot(M*grad(mu ), grad(v1))*dx
-            self._PrevFlux = dot(M*grad(mu0), grad(v1))*dx
-            F = dot(M*grad(u2), grad(v1))*dx
+            self._CurrFlux = dot(M(c)*grad(mu ), grad(v1))*dx
+            self._PrevFlux = dot(M(c0)*grad(mu0), grad(v1))*dx
+            F = dot(M(c)*grad(u2), grad(v1))*dx
             self.FluxMatrix = assemble(F)
-            self._FluxNorm  = dot(M*grad(self.mu), grad(self.mu))*dx
+            self._FluxNorm  = dot(M(c)*grad(self.mu), grad(self.mu))*dx
 
             ### Source          
-            self.SourceMatrix = assemble(M*kappa*u1*v1*dx)
-            self.SourceTerm   = assemble(M*kappa*m*v1*dx)
+            self.SourceMatrix = assemble(M(c)*kappa*u1*v1*dx)
+            self.SourceTerm   = assemble(M(c)*kappa*m*v1*dx)
 
 
         else:
             ###----------------------------
-            ### General case assemlage
+            ### General case assembly
             ###----------------------------
 
             ### Solver
@@ -273,8 +292,10 @@ class CahnHilliard(NonlinearProblem):
             P = phi1(c)*v*dx + phi2(c0)*v*dx  + lmbda * dot(grad(c), grad(v))*dx
             # P = phi1(c)*v*dx + phi2(c)*v*dx  + lmbda * dot(grad(c), grad(v))*dx
 
-            self._CurrFlux = dot(M*grad(mu ), grad(q))*dx
-            self._PrevFlux = dot(M*grad(mu0), grad(q))*dx
+
+            # import pdb; pdb.set_trace()
+            self._CurrFlux = dot(grad(M(c)*mu ), grad(q))*dx
+            self._PrevFlux = dot(grad(M(c0)*mu0), grad(q))*dx
 
             b1, b2 = self.TS.beta1, self.TS.beta2
             Eq1 = c*q*dx + (b1+b2)*self._CurrFlux #+ b2*self._PrevFlux ### c0 goes to History term
@@ -305,8 +326,8 @@ class CahnHilliard(NonlinearProblem):
             u1, u2  = TrialFunction(W)
             v1, v2  = TestFunctions(W)
 
-            self.DiffusionMatrix = assemble(dot(M*grad(u1),grad(v1))*dx + dot(M*grad(u2),grad(v2))*dx)
-            self._FluxNorm = dot(M*grad(mu), grad(mu))*dx
+            self.DiffusionMatrix = assemble(dot(M(c)*grad(u1),grad(v1))*dx + dot(M(c)*grad(u2),grad(v2))*dx)
+            self._FluxNorm = dot(M(c)*grad(mu), grad(mu))*dx
 
         ###----------------------------------------------------------
         

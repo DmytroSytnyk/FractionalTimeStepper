@@ -205,6 +205,7 @@ class RationalApproximation_AAA(BasicRationalApproximation):
         B = np.eye(m+1)
         B[0,0] = 0
         E = np.block([ [ 0, w.reshape([1,m]) ], [ np.ones([m,1]), np.diag(z.flatten()) ] ])
+        # import pdb; pdb.set_trace()
         pol = scipy.linalg.eig(E,B, left=False, right=False)
         pol = pol[~np.isinf(pol)]
         E = np.block([ [ 0, (w*f).reshape([1,m]) ], [ np.ones([m,1]), np.diag(z.flatten()) ] ])
