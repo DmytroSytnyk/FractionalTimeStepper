@@ -1,4 +1,5 @@
 
+import math
 import numpy as np
 import matplotlib.pyplot as plt
 from tqdm import tqdm
@@ -24,13 +25,16 @@ from source.TimeStepper.FractionalDerivative import FractionalDerivativeRA
 
 config = {
     'alpha'         :   0.5,
-    'FinalTime'     :   4,
-    'nTimeSteps'    :   1000,
+    'FinalTime'     :   2,
+    'nTimeSteps'    :   2000,
     'IC'            :   InitialConditions,
-    'eps'           :   1.e-1,  ###  surface parameter
-    'mobility'      :   1.e0,
-    'Nx'            :   2**5,
-    'verbose'       :   False,
+    'eps'           :   math.sqrt(5.e-3),                   ### surface parameter
+    'mobility'      :   lambda x: (1 - x**2)**2,            ### Mobility
+    'Phi'           :   lambda x: 0.5 * (1-x**2)**2,        ### Potential
+    'phi1'          :   lambda x: 0.5 * (8 * x),            ### convex part the potential derivative
+    'phi2'          :   lambda x: 0.5 * (4*x**3 - 12*x),    ### concave part the potential derivative
+    'Nx'            :   100,
+    'verbose'       :   True,
 ### RA parameters:
     'nSupportPoints':   100,    ### AAA candidate points
     'tol'           :   1.e-13, ### AAA accuracy

@@ -53,10 +53,19 @@ class InitialConditions(UserExpression):
         # values[0] = 0.4 + 0.2*(0.5 - np.random.random())
         # values[0] = np.random.random()
         # values[0] =  0.4+1/50*(cos(1/4*pi*x[1])  + cos(4*pi*x[0]))
-        values[0] =  0.4 + 1/50 * cos(2*pi*x[0]) * cos(2*pi*x[1]) # * cos(2*pi*x[2])
         # values[0] = np.random.normal(loc=0.5, scale=0.001)
         # values[0] = (np.cos(pi*self.k0*x[0])*self.G0) @ self.coefs @ (np.cos(pi*self.k1*x[1])*self.G1)
-        values[1] = 0.0
+        #####################################################
+        # IC enabled by default in Ustim's code
+        #####################################################
+        # values[0] =  0.4 + 1/50 * cos(2*pi*x[0]) * cos(2*pi*x[1]) # * cos(2*pi*x[2])
+        # values[1] = 0.0
+        #####################################################
+        ## Purely random IC (taken from the Marnvin's code ##
+        #####################################################
+        values[0] = 0.002*(0.5 - random.random()) #ICSmooth(x, 0.2501)
+        # NOTE: By definition \mu_0 = \Psi'(\phi_0) - \varepsilon^2 \Delta \psi
+        values[1] = 0.0 
     def value_shape(self):
         return (2,)
 
@@ -137,16 +146,18 @@ class CahnHilliardVM(NonlinearProblem):
         else:
             raise Exception('Dont know these zeros.')
         if not callable(Phi):
-            Phi  = lambda x: Phi;
+            Phi  = lambda x: Phi
         if not callable(phi1):
-            phi1 = lambda x: phi1;
+            phi1 = lambda x: phi1
         if not callable(phi2):
-            phi2 = lambda x: phi2;
+            phi2 = lambda x: phi2
         
         ### Mobility
         _M = kwargs.get('mobility', lambda x: (1-x**2)**2)
         if not callable(_M):
-            M = lambda x: _M;
+            M = lambda x: _M
+        else:
+            M = _M
 
         ### Other parameters
         kappa = kwargs.get('kappa', 0)
@@ -443,7 +454,7 @@ class CahnHilliardVM(NonlinearProblem):
         if self.Solver.parameters["linear_solver"] != "lu":
             self.Solver.parameters["preconditioner"] = "ilu"
         self.Solver.parameters["convergence_criterion"] = "incremental" #"residual" #"incremental"
-        # self.Solver.parameters["maximum_iterations"] = 1000
+        self.Solver.parameters["maximum_iterations"] = 1000
         self.Solver.parameters["relative_tolerance"] = 1e-6
         # self.Solver.parameters["absolute_tolerance"] = 1.e-8
         # self.Solver.parameters["error_on_nonconvergence"] = True
