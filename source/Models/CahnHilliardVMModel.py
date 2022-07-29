@@ -58,14 +58,14 @@ class InitialConditions(UserExpression):
         #####################################################
         # IC enabled by default in Ustim's code
         #####################################################
-        # values[0] =  0.4 + 1/50 * cos(2*pi*x[0]) * cos(2*pi*x[1]) # * cos(2*pi*x[2])
-        # values[1] = 0.0
+        values[0] =  0.4 + 1/50 * cos(2*pi*x[0]) * cos(2*pi*x[1]) # * cos(2*pi*x[2])
+        values[1] = 0.0
         #####################################################
         ## Purely random IC (taken from the Marnvin's code ##
         #####################################################
-        values[0] = 0.002*(0.5 - random.random()) #ICSmooth(x, 0.2501)
+        #values[0] = 0.002*(0.5 - random.random()) #ICSmooth(x, 0.2501)
         # NOTE: By definition \mu_0 = \Psi'(\phi_0) - \varepsilon^2 \Delta \psi
-        values[1] = 0.0 
+        #values[1] = 0.0 
     def value_shape(self):
         return (2,)
 
@@ -124,8 +124,7 @@ class CahnHilliardVM(NonlinearProblem):
         b1, b2  = self.TS.beta1, self.TS.beta2
 
         ### Exports
-        ExportFolder  = kwargs.get('ExportFolder', None)
-        self.Exporter = Exporter(self, Folder=ExportFolder)
+        self.Exporter = Exporter(self, **kwargs)
 
         ###--------------------------------------------------------
 
@@ -221,7 +220,9 @@ class CahnHilliardVM(NonlinearProblem):
             u_init = IC(degree=1)
             u.interpolate(u_init)
             u0.interpolate(u_init)
+        self.c0_sol, self.mu0_sol = u0.split(deepcopy=True)
         self.c_init = u.split(True)[0].vector()[self.v2d]
+
 
         ###-----------------------------------
         ### Weak statement of the equations
@@ -593,9 +594,12 @@ class Exporter:
 
     def __init__(self, ProblemObj, **kwargs):
         self.ProblemObj = ProblemObj
-        self.Folder     = kwargs.get('Folder', None)
+        self.Folder     = kwargs.get('ExportFolder', None)
+        self.FilePrefix = kwargs.get('FilePrefix', '')
+        self.name       = kwargs.get('Name', 'sol')
         if self.Folder:
-            self.vtk_file = File(self.Folder + 'Solution.pvd', "compressed")
+            os.makedirs(self.Folder, exist_ok=True)
+            self.vtk_file = File(os.path.join(self.Folder, self.FilePrefix +'sol.pvd'), "compressed")
 
     def test_export_every(self, export_every):
         if export_every is None:
@@ -607,28 +611,32 @@ class Exporter:
             test = ( t%tau <= h/2 or tau-t%tau < h/2)
             return test
 
+    def export_iv_vtk(self):
+        phi0 =  self.ProblemObj.c0_sol
+        phi0.rename(self.name+'0','At t=0')
+        # import pdb; pdb.set_trace()    
+        self.vtk_file << phi0
+
     def export_step_vtk(self, **kwargs):
         export_every = kwargs.get('export_every', None)
         if self.test_export_every(export_every):
             t = self.ProblemObj.TS.CurrTime
             u = self.ProblemObj.CurrSolFull
+            u.rename(self.name,'')
             self.vtk_file << (u.split()[0], t)
 
     def export_step_npy(self, **kwargs):
         export_every = kwargs.get('export_every', None)
         field        = kwargs.get('field', self.ProblemObj.CurrSolFull.split()[0].vector()[:])
-        name         = kwargs.get('name', 'field')
         if self.test_export_every(export_every):
             i = self.ProblemObj.TS.TimeStep
-            np.save(self.Folder + name + '_i={0:d}'.format(i), field)
+            np.save(os.path.join(self.Folder,prefix+name + '_i={0:d}'.format(i)), field)
 
     def export_npy(self, data, **kwargs):
-        name = kwargs.get('name', 'data')
-        np.save(self.Folder + name, data)
+        np.save(os.path.join(self.Folder,self.FilePrefix + self.name + '.npy'))
 
     def import_npy(self, **kwargs):
-        name = kwargs.get('name', 'data')
-        return np.load(self.Folder + name + '.npy')
+        return np.load(os.path.join(self.Folder,self.FilePrefix + self.name + '.npy'))
 
     def clear(self):
         os.system('rm ' + self.Folder + '*' )
