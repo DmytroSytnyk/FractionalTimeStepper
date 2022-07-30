@@ -16,7 +16,7 @@ for i in range(10):
     if basename == "script": break
 sys.path.append(SOURCEPATH)
 
-from source.Models.CahnHilliardVMModel import CahnHilliardVM, InitialConditions, IC_TwoBubbles   
+from source.Models.CahnHilliardVMModel import CahnHilliardVM, InitialConditions, IC_TwoBubbles, IC_BubbleSoup   
 from source.TimeStepper.FractionalDerivative import FractionalDerivativeRA
 
 ####################################
@@ -26,29 +26,49 @@ from source.TimeStepper.FractionalDerivative import FractionalDerivativeRA
 config = {
 ### Model parameters:
     'alpha'         :   0.5,
-    'FinalTime'     :   0.1,
+    'FinalTime'     :   4,
+    'scheme'        :   'RA:mCN',
+### Format "XX:Y..Y"; XX = RA / L1 / GJ; 
+##  for RA: Y..Y = mIE - modified Implicit Euler (theta=1), mCN - modified Crank-Nicolson
     'nTimeSteps'    :   2000,
-    'IC'            :   IC_TwoBubbles,
-    # 'IC'            :   nitialConditions,
-    'eps'           :   1e-1,                   ### surface parameter
+    'eps'           :   1e-2,                               ### surface parameter
     'mobility'      :   lambda x: (1 - x**2)**2,            ### mobility
     'Phi'           :   lambda x: 0.5 * (1-x**2)**2,        ### potential
     'phi1'          :   lambda x: 0.5 * (8 * x),            ### convex part the potential derivative
     'phi2'          :   lambda x: 0.5 * (4*x**3 - 12*x),    ### concave part the potential derivative
-    'Nx'            :   2**4,
+    'Nx'            :   2**6,
+    'autotune_mu0'  :   True,                               ### Make mu0 to satisfy second equation
     'verbose'       :   True,
 ### RA parameters:
     'nSupportPoints':   100,    ### AAA candidate points
     'tol'           :   1.e-13, ### AAA accuracy
 ### Solution export parameter:
+    'ExportFolder'  :   './CahnHilliard/IC_BubbleSoup/',
     'export_every'  :   0.1, 
     'Name'          :   'phi',
-    'ExportFolder' :   './CahnHilliard/IC_TwoBubbles/'
 }
-config['FilePrefix'] = 'CH_a_{alpha:.3f}_T_{FinalTime:f}_nt_{nTimeSteps:d}_Nx_{Nx:d}_e_{eps:.4f}'.format(**config)
+    # 'IC'            :   IC_TwoBubbles,
+    # 'IC'            :   InitialConditions,
+#### IC_BubbleSoup Initial Condition function generate random bubbles with specified parameters
+config['IC']           =   IC_BubbleSoup                    ### Initial conditions
+# config['ICParameters'] = {'n': 10, 'R': 0.1, 'r': 0.003}    ### Optional parameters to IC
+# config['ICParameters'] = {'n': 3, 'eps': config['eps']}    ### Optional parameters to IC
+### Working connfigureation sets:
+
+## 3 Bubbles:
+# config['ICParameters'] = {'n': 3, 'seed': 0}    ### Optional parameters to IC
+# config['ICParameters'] = {'n': 3, 'seed': 1}    ### Optional parameters to IC
+# config['ICParameters'] = {'n': 3, 'seed': 42}    ### Optional parameters to IC
+
+## 10 Bubbles:
+config['ICParameters'] = {'n': 10, 'eps': 0.04, 'R': 0.2, 'r': 0.005, 'seed': 3}    ### Optional parameters to IC
+
+# config['ICParameters'] = {'n': 10, 'R': 0.1, 'r': 0.003}    ### Optional parameters to IC
+config['FilePrefix']   = 'CH_a_{alpha:.3f}_T_{FinalTime:f}_nt_{nTimeSteps:d}_Nx_{Nx:d}_e_{eps:.4f}'.format(**config)
 # import pdb; pdb.set_trace()    
-FracDerRA = FractionalDerivativeRA(**config)
-pb = CahnHilliardVM(**config, FD=FracDerRA)
+# FracDerRA = FractionalDerivativeRA(**config)
+# pb = CahnHilliardVM(**config, FD=FracDerRA)
+pb = CahnHilliardVM(**config)
 
 # pb.TS.RA.plot() ### verify the rational approximation
 

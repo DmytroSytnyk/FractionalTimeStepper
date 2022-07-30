@@ -75,7 +75,7 @@ class IC_TwoBubbles(UserExpression):
         self.c = [ (0.5-0.2, 0.5), (0.5+0.2, 0.5) ]
         # self.c = [ (0.5-0.2, 0.5-0.2), (0.5+0.2, 0.5-0.2), (0.5+0.2, 0.5+0.2), (0.5-0.2, 0.5+0.2) ]
         self.r = 0.15
-        self.eps = kwargs.get('eps', 0.03)
+        self.eps = kwargs.pop('eps', 0.03)
     def eval(self, values, x):
         v = len(self.c)-1
         for c in self.c:
@@ -88,11 +88,11 @@ class IC_TwoBubbles(UserExpression):
 
 class IC_FourBubbles(UserExpression):
     def __init__(self, **kwargs):
-        super().__init__(**kwargs)
         d = 0.2
         self.c = [ (0.5-d, 0.5-d), (0.5+d, 0.5-d), (0.5+d, 0.5+d), (0.5-d, 0.5+d) ]
         self.r = 0.15
-        self.eps = kwargs.get('eps', 0.03)
+        self.eps = kwargs.pop('eps', 0.03)
+        super().__init__(**kwargs)
     def eval(self, values, x):
         v = len(self.c)-1
         for c in self.c:
@@ -103,7 +103,46 @@ class IC_FourBubbles(UserExpression):
     def value_shape(self):
         return (2,)
 
+class IC_BubbleSoup(UserExpression):
+    def __init__(self, **kwargs):
+        seed = kwargs.pop('seed',0)
+        np.random.seed(seed)
+        n  = kwargs.pop('n', 3)
+        self.eps = kwargs.pop('eps', 0.03)
+        R  = min(0.5, max(0.02,kwargs.pop('R', 0.2)))
+        r  = max(0.02, kwargs.pop('r', 0.04))
+        R = max(R,r); 
+        r = min(R,r)
+        # Generate rundom bubbles
+        self.bR = r + np.random.rand(n)*(R-r)
+        self.bC = np.random.rand(2, n)*(np.ones((2,n)) - 2*self.bR)+self.bR;
+        self.bn = n;
+        super().__init__(**kwargs)
+    def eval(self, values, x):
+        vr = self.bC - np.tile([[x[0]],[x[1]]],(1,self.bn))
+        r = np.linalg.norm(vr,axis=0,ord=2)
+        # import pdb; pdb.set_trace()    
+        # The values is assumed to be between -1 and 1 so one has to divide by the number of bubbles
+        values[0]  = sum(np.tanh((self.bR-r)/(sqrt(2)*self.eps)))+self.bn-1
+        # Make sure that values is within [-1,1]
+        # This is necessary if bubbles overlap
+        values[0]  = max(-1,min(1,values[0])) 
+        values[1]  = 0
+    def value_shape(self):
+        return (2,)
 
+class IC_RandomField(UserExpression):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.seed = kwargs.pop('seed', 0)
+        self.eps  = kwargs.pop('eps', 0.002)
+        self.c    = kwargs.pop('center', 0.5)
+        np.random.seed(0)
+    def eval(self, values, x):
+        values[0] = self.eps*(self.c - random.random()) #ICSmooth(x, 0.2501)
+        values[1] = 0.0 
+    def value_shape(self):
+        return (2,)
 ###########################################
 
 
@@ -213,15 +252,37 @@ class CahnHilliardVM(NonlinearProblem):
 
         # Create intial conditions and interpolate
         IC = kwargs.get('IC')
+        ICParameters = kwargs.get('ICParameters',{})
         if isinstance(IC, np.ndarray):
             u.vector()[self.dofmap1.dofs()]  = IC
             u0.vector()[self.dofmap1.dofs()] = IC
         else:            
-            u_init = IC(degree=1)
+            u_init = IC(**(ICParameters | {'degree':1}))
             u.interpolate(u_init)
             u0.interpolate(u_init)
-        self.c0_sol, self.mu0_sol = u0.split(deepcopy=True)
         self.c_init = u.split(True)[0].vector()[self.v2d]
+
+        # Solve auxiliary problem to determine m0
+        self.c0_sol, self.mu0_sol = u0.split(deepcopy=True)
+        
+        if kwargs.get('autotune_mu0',False):
+            W1 = W.sub(1).collapse();       # Extract function space from W that corresponds to mu
+            u_W1 = Function(W1)
+            u_W1.assign(self.c0_sol)
+            # u_W1 =project(u1_sol,W1.collapse()) # This gives error on the order of machine precission
+            # # DEBUG: Check if u_W1 and u1_sol coincide
+            # print(max(u1_sol.vector()-u_W1.vector()))
+            mu_W1  = Function(W1); 
+            dmu_W1 = TrialFunction(W1) 
+            v_W1   = TestFunction(W1)
+            A0     = inner(dmu_W1,v_W1)*dx
+            L0     = (phi1(u_W1) + phi2(u_W1))*v_W1*dx + lmbda*dot(grad(u_W1),grad(v_W1))*dx
+            solve(assemble(A0), mu_W1.vector(), assemble(L0), "gmres", "ilu")
+            # Test solution accuracy by calculating the residue
+            m0_res = assemble((mu_W1*mu_W1 - (phi1(u_W1) + phi2(u_W1))*mu_W1-lmbda*dot(grad(u_W1),grad(mu_W1)))*dx)
+            self.mu0_sol.assign(mu_W1)
+            if self.verbose:
+                print(f'Residue of calculated initial condition for mu is {m0_res}')
 
 
         ###-----------------------------------
@@ -246,13 +307,13 @@ class CahnHilliardVM(NonlinearProblem):
             v1, v2  = TestFunctions(W)
 
 
-            K = u1*v1*dx + u2*v2*dx + (b1+b2)*dot(M(c)*grad(u2), grad(v1))*dx - 2*u1*v2*dx - lmbda * dot(grad(u1), grad(v2))*dx + (b1+b2)*M(c)*kappa*u1*v1*dx
+            K = u1*v1*dx + u2*v2*dx + (b1+b2)*dot(M(c0)*grad(u2), grad(v1))*dx - 2*u1*v2*dx - lmbda * dot(grad(u1), grad(v2))*dx + (b1+b2)*M(c0)*kappa*u1*v1*dx
             self.StiffnessMatrix = assemble(K)
             # self.LinSolver.set_operator(self.StiffnessMatrix)
             # self.LinSolverMu.set_operator(self.MassMatrixMu)
 
             # self._RHS = Constant(1/eps) * phi2(c0)*v2*dx
-            self._RHS = phi2(c0)*v2*dx + (b1+b2)*M(c)*kappa*m*v1*dx
+            self._RHS = phi2(c0)*v2*dx + (b1+b2)*M(c0)*kappa*m*v1*dx
 
 
             ### Init history term amd modes (in numpy vector terms)
@@ -266,7 +327,7 @@ class CahnHilliardVM(NonlinearProblem):
             self.Modes1     = np.zeros([len(self.dofmap1.dofs()), self.TS.nModes+1])
             self.Modes1[:,0]= self.Modes[:,0]   
 
-            self.DiffusionMatrix  = assemble(dot(M(c)*grad(u1),grad(v1))*dx)
+            self.DiffusionMatrix  = assemble(dot(M(c0)*grad(u1),grad(v1))*dx)
             self.MassMatrix2      = assemble(u2*v2*dx)
             if self.TS.Scheme == 'mIE':
                 self._Mmu  = (phi1(c) + phi2(c0))*v2*dx + lmbda * dot(grad(c), grad(v2))*dx
@@ -281,15 +342,15 @@ class CahnHilliardVM(NonlinearProblem):
             self.mu0.vector().set_local(self.mu.vector()[:])
             Mmu = assemble(self._Mmu)
             self.LinSolver2.solve(self.MassMatrix2, self.mu.vector(), Mmu)
-            self._CurrFlux = dot(M(c)*grad(mu ), grad(v1))*dx
+            self._CurrFlux = dot(M(c0)*grad(mu), grad(v1))*dx
             self._PrevFlux = dot(M(c0)*grad(mu0), grad(v1))*dx
-            F = dot(M(c)*grad(u2), grad(v1))*dx
+            F = dot(M(c0)*grad(u2), grad(v1))*dx
             self.FluxMatrix = assemble(F)
-            self._FluxNorm  = dot(M(c)*grad(self.mu), grad(self.mu))*dx
+            self._FluxNorm  = dot(M(c0)*grad(self.mu), grad(self.mu))*dx
 
             ### Source          
-            self.SourceMatrix = assemble(M(c)*kappa*u1*v1*dx)
-            self.SourceTerm   = assemble(M(c)*kappa*m*v1*dx)
+            self.SourceMatrix = assemble(M(c0)*kappa*u1*v1*dx)
+            self.SourceTerm   = assemble(M(c0)*kappa*m*v1*dx)
 
 
         else:
@@ -305,7 +366,6 @@ class CahnHilliardVM(NonlinearProblem):
             # P = phi1(c)*v*dx + phi2(c)*v*dx  + lmbda * dot(grad(c), grad(v))*dx
 
 
-            # import pdb; pdb.set_trace()
             self._CurrFlux = dot(grad(M(c)*mu ), grad(q))*dx
             self._PrevFlux = dot(grad(M(c0)*mu0), grad(q))*dx
 
@@ -436,11 +496,16 @@ class CahnHilliardVM(NonlinearProblem):
     # Fractional Time Stepper
     #----------------------------------------
     def set_TimeStepper(self, **kwargs):
-        self.scheme = kwargs.get('scheme', 'mCN')
-        if self.scheme == 'L1':
+        scheme = kwargs.get('scheme', 'RA')[:2]
+        if scheme == 'L1':
             self.TS = FracTS_L1(**kwargs)
-        else:
+        elif scheme == 'RA':
             self.TS = FracTS_RA(**kwargs)          
+        elif scheme == 'GJ':
+            self.TS = FracTS_GJ(**kwargs)
+        else:
+            raise Exception('Wrong timestepper scheme {0:s}'.format(scheme))
+        self.scheme = scheme
         self.dt = self.TS.dt
         self.T  = self.TS.TimeInterval
         return self.TS
@@ -452,6 +517,7 @@ class CahnHilliardVM(NonlinearProblem):
         # Nonlinear solver
         self.Solver = NewtonSolver()
         self.Solver.parameters["linear_solver"] = "lu"
+        # self.Solver.parameters["preconditioner"] = "amg"
         if self.Solver.parameters["linear_solver"] != "lu":
             self.Solver.parameters["preconditioner"] = "ilu"
         self.Solver.parameters["convergence_criterion"] = "incremental" #"residual" #"incremental"
@@ -462,6 +528,7 @@ class CahnHilliardVM(NonlinearProblem):
         self.Solver.parameters["report"] = self.verbose
 
         ### Linear solver
+        # LinSolver = PETScKrylovSolver("cg", "amg")
         LinSolver = PETScLUSolver("mumps")
         # LinSolver = PETScKrylovSolver("gmres", "ilu")
         # # LinSolver = PETScKrylovSolver("cg", "amg")
@@ -614,7 +681,6 @@ class Exporter:
     def export_iv_vtk(self):
         phi0 =  self.ProblemObj.c0_sol
         phi0.rename(self.name+'0','At t=0')
-        # import pdb; pdb.set_trace()    
         self.vtk_file << phi0
 
     def export_step_vtk(self, **kwargs):
