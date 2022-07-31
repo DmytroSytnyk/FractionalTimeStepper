@@ -28,6 +28,14 @@ class FracTS_L1(BasicTS):
 
         self.compute_Coefficients(**kwargs)
         self.compute_AdamsMoultonCoefficients()
+        if self.verbose:
+            print()
+            print('=================================')
+            print('Fractional Derivative scheme: L1')
+            print('=================================')
+            print('alpha:             ', self.alpha)
+            print('Number time-steps: ', self.nTimeSteps)
+            print()
 
 
     #----------------------------------------------------------------------------------------

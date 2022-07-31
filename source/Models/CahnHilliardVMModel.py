@@ -121,7 +121,6 @@ class IC_BubbleSoup(UserExpression):
     def eval(self, values, x):
         vr = self.bC - np.tile([[x[0]],[x[1]]],(1,self.bn))
         r = np.linalg.norm(vr,axis=0,ord=2)
-        # import pdb; pdb.set_trace()    
         # The values is assumed to be between -1 and 1 so one has to divide by the number of bubbles
         values[0]  = sum(np.tanh((self.bR-r)/(sqrt(2)*self.eps)))+self.bn-1
         # Make sure that values is within [-1,1]
@@ -150,12 +149,14 @@ class CahnHilliardVM(NonlinearProblem):
 
     def __init__(self, **kwargs):
         NonlinearProblem.__init__(self)
+        # Save config before it get's modified
+        self.config = kwargs
 
         self.verbose = kwargs.get('verbose', False)
         set_log_active(self.verbose)
         # set_log_level(40)
 
-        ### Spacial dimension
+        ### Spatial dimension
         self.ndim = kwargs.get('ndim', 2)
         
         ### Time-stepper
@@ -169,33 +170,33 @@ class CahnHilliardVM(NonlinearProblem):
 
         ### Parameters
         zeros = kwargs.get("zeros", [-1,1])
-        eps   = kwargs.get('eps', 1.e-1)    # surface parameter
-        lmbda = Constant(eps**2)
+        self.eps   = kwargs.get('eps', 1.e-1)    # surface parameter
+        lmbda = Constant(self.eps**2)
 
         ### Chemical potential derivative
         if zeros==[0,1]:
-            Phi  = kwargs.get('Phi', lambda x: 0.25 * (1-x**2)**2)
-            phi1 = kwargs.get('phi1', lambda x: 0.25 * (3 * x)              )   ### convex part
-            phi2 = kwargs.get('phi2', lambda x: 0.25 * (4*x*x*x - 6*x*x - x))   ### concave part
+            self.Phi  = eval(kwargs.get('Phi', 'lambda x: 0.25 * (1-x**2)**2'           ))
+            self.phi1 = eval(kwargs.get('phi1', 'lambda x: 0.25 * (3 * x'               ))   ### convex part
+            self.phi2 = eval(kwargs.get('phi2', 'lambda x: 0.25 * (4*x*x*x - 6*x*x - x)'))   ### concave part
         elif zeros==[-1,1]:
-            Phi  = kwargs.get('Phi', lambda x: 0.25 * (1-x**2)**2)
-            phi1 = kwargs.get('phi1', lambda x: 0.25 * (8 * x)        )  ### convex part
-            phi2 = kwargs.get('phi2', lambda x: 0.25 * (4*x**3 - 12*x))  ### concave part
+            self.Phi  = eval(kwargs.get('Phi', 'lambda x: 0.25 * (1-x**2)**2'     ))
+            self.phi1 = eval(kwargs.get('phi1', 'lambda x: 0.25 * (8 * x)'        ))  ### convex part
+            self.phi2 = eval(kwargs.get('phi2', 'lambda x: 0.25 * (4*x**3 - 12*x)'))  ### concave part
         else:
-            raise Exception('Dont know these zeros.')
-        if not callable(Phi):
-            Phi  = lambda x: Phi
-        if not callable(phi1):
-            phi1 = lambda x: phi1
-        if not callable(phi2):
-            phi2 = lambda x: phi2
+            raise Exception('Don\'t know these zeros.')
+        if not callable(self.Phi):
+            self.Phi  = lambda x: self.Phi
+        if not callable(self.phi1):
+            self.phi1 = lambda x: self.phi1
+        if not callable(self.phi2):
+            self.phi2 = lambda x: self.phi2
         
         ### Mobility
-        _M = kwargs.get('mobility', lambda x: (1-x**2)**2)
+        _M = eval(kwargs.get('mobility', 'lambda x: (1-x**2)**2'))
         if not callable(_M):
-            M = lambda x: _M
+            self.M = lambda x: _M
         else:
-            M = _M
+            self.M = _M
 
         ### Other parameters
         kappa = kwargs.get('kappa', 0)
@@ -205,14 +206,19 @@ class CahnHilliardVM(NonlinearProblem):
         ### Mesh
         self.Nx   = kwargs.get('Nx', 2**5)    # number of grid points in space (one direction)
         self.ndim = kwargs.get('ndim', 2)
-        if   self.ndim == 2:
+        if self.ndim == 2:
             self.mesh = UnitSquareMesh.create(self.Nx, self.Nx, CellType.Type.quadrilateral)
         elif self.ndim == 3:
             self.mesh = UnitCubeMesh.create(self.Nx, self.Nx, self.Nx, CellType.Type.hexahedron)
         else:
-            raise Exception('The dimesion is not implemented!')
+            raise Exception('The dimension is not implemented!')
 
 
+        ### FEniCS related options
+        self._fenics_assembly_pars = dict(form_compiler_parameters = {"quadrature_degree": 1}) 
+
+        ### At the beginning the initial mass is unknown
+        self.mass_init = float('nan')
         ### Function space
         fg_PerBC = kwargs.get('PerBC', False)
         if fg_PerBC:
@@ -251,7 +257,7 @@ class CahnHilliardVM(NonlinearProblem):
         self.CurrSol, self.PrevSol = c, c0
 
         # Create intial conditions and interpolate
-        IC = kwargs.get('IC')
+        IC = eval(kwargs.get('IC'))
         ICParameters = kwargs.get('ICParameters',{})
         if isinstance(IC, np.ndarray):
             u.vector()[self.dofmap1.dofs()]  = IC
@@ -259,28 +265,28 @@ class CahnHilliardVM(NonlinearProblem):
         else:            
             u_init = IC(**(ICParameters | {'degree':1}))
             u.interpolate(u_init)
-            u0.interpolate(u_init)
+            u0 = u.copy(deepcopy=True)
+            # u0.interpolate(u_init)
         self.c_init = u.split(True)[0].vector()[self.v2d]
 
         # Solve auxiliary problem to determine m0
         self.c0_sol, self.mu0_sol = u0.split(deepcopy=True)
         
         if kwargs.get('autotune_mu0',False):
-            W1 = W.sub(1).collapse();       # Extract function space from W that corresponds to mu
-            u_W1 = Function(W1)
-            u_W1.assign(self.c0_sol)
-            # u_W1 =project(u1_sol,W1.collapse()) # This gives error on the order of machine precission
-            # # DEBUG: Check if u_W1 and u1_sol coincide
-            # print(max(u1_sol.vector()-u_W1.vector()))
-            mu_W1  = Function(W1); 
-            dmu_W1 = TrialFunction(W1) 
-            v_W1   = TestFunction(W1)
-            A0     = inner(dmu_W1,v_W1)*dx
-            L0     = (phi1(u_W1) + phi2(u_W1))*v_W1*dx + lmbda*dot(grad(u_W1),grad(v_W1))*dx
-            solve(assemble(A0), mu_W1.vector(), assemble(L0), "gmres", "ilu")
+            u_V2 = Function(self.V1)
+            u_V2.assign(self.c0_sol)
+            # u_V2 =project(u1_sol,self.V2.collapse()) # This gives error on the order of machine precission
+            # # DEBUG: Check if u_V2 and u1_sol coincide
+            # print(max(u1_sol.vector()-u_V2.vector()))
+            mu_V2  = Function(self.V2); 
+            dmu_V2 = TrialFunction(self.V2) 
+            v_V2   = TestFunction(self.V2)
+            A0     = inner(dmu_V2,v_V2)*dx
+            L0     = (self.phi1(u_V2) + self.phi2(u_V2))*v_V2*dx + lmbda*dot(grad(u_V2),grad(v_V2))*dx
+            solve(assemble(A0), mu_V2.vector(), assemble(L0), "gmres", "ilu")
             # Test solution accuracy by calculating the residue
-            m0_res = assemble((mu_W1*mu_W1 - (phi1(u_W1) + phi2(u_W1))*mu_W1-lmbda*dot(grad(u_W1),grad(mu_W1)))*dx)
-            self.mu0_sol.assign(mu_W1)
+            m0_res = assemble((mu_V2*mu_V2 - (self.phi1(u_V2) + self.phi2(u_V2))*mu_V2-lmbda*dot(grad(u_V2),grad(mu_V2)))*dx)
+            self.mu0_sol.assign(mu_V2)
             if self.verbose:
                 print(f'Residue of calculated initial condition for mu is {m0_res}')
 
@@ -291,6 +297,10 @@ class CahnHilliardVM(NonlinearProblem):
 
         self.fg_LinearSolve = kwargs.get('LinSolve', False)
 
+        Phi = self.Phi
+        phi1 = self.phi1
+        phi2 = self.phi2
+        M = self.M
         if self.fg_LinearSolve:
             ###----------------------------
             ### Linear case assembly
@@ -329,9 +339,9 @@ class CahnHilliardVM(NonlinearProblem):
 
             self.DiffusionMatrix  = assemble(dot(M(c0)*grad(u1),grad(v1))*dx)
             self.MassMatrix2      = assemble(u2*v2*dx)
-            if self.TS.Scheme == 'mIE':
+            if self.TS.Scheme[3:] == 'mIE':
                 self._Mmu  = (phi1(c) + phi2(c0))*v2*dx + lmbda * dot(grad(c), grad(v2))*dx
-            elif self.TS.Scheme == 'mCN':
+            elif self.TS.Scheme[3:] == 'mCN':
                 self._Mmu  = (phi1(c) + phi2(c))*v2*dx + lmbda * dot(grad(c), grad(v2))*dx
             else:
                 raise Exception('Unknown scheme!')
@@ -371,20 +381,15 @@ class CahnHilliardVM(NonlinearProblem):
 
             b1, b2 = self.TS.beta1, self.TS.beta2
             Eq1 = c*q*dx + (b1+b2)*self._CurrFlux #+ b2*self._PrevFlux ### c0 goes to History term
+            # b = self.TS.beta
+            # Eq1 = c*q*dx + b*self._CurrFlux
             Eq2 = mu*v*dx - P
             self._Residual = Eq1 + Eq2  ### without history term
-
-
-            ### Source
-            S = kwargs.get('S', 0)
-            if S:
-                SourceTerm = Constant(-S)*(c-zeros[0])*(c-zeros[1])*q*dx
-                self._Residual += SourceTerm
 
             # Compute directional derivative about u in the direction of du (Jacobian)
             self.Jacobian = derivative(self._Residual, u, du)
 
-            ### Init history term amd modes (in numpy vector terms)
+            ### Init history term and modes (in numpy vector terms)
             self.Modes      = np.zeros([u.vector().get_local().size, self.TS.nModes+1])
             self.Modes[:,0] = assemble(c*q*dx).get_local()        
             self.History    = self.Modes @ self.TS.gamma_k
@@ -398,6 +403,7 @@ class CahnHilliardVM(NonlinearProblem):
             u1, u2  = TrialFunction(W)
             v1, v2  = TestFunctions(W)
 
+            #NOTE! Something strange is going on here. Is this only needed to calculate HistoryEnergy?
             self.DiffusionMatrix = assemble(dot(M(c)*grad(u1),grad(v1))*dx + dot(M(c)*grad(u2),grad(v2))*dx)
             self._FluxNorm = dot(M(c)*grad(mu), grad(mu))*dx
 
@@ -405,9 +411,12 @@ class CahnHilliardVM(NonlinearProblem):
         
         ### Other quantities
         self._mass     = c*dx
+
+        # self._roughness = ((c - self.mass_init)**2)*dx
+
         # self._Energy1  = (Phi1(c)+Phi2(c))*dx + 0.5*lmbda*dot(grad(c), grad(c))*dx
         self._Energy   = Phi(c)*dx + 0.5*lmbda*dot(grad(c), grad(c))*dx
-        # import pdb; pdb.set_trace()    
+        # Print FEniCS parameters
         print(parameters.str(self.verbose))
 
 
@@ -470,6 +479,8 @@ class CahnHilliardVM(NonlinearProblem):
 
         ### yield initial solution
         self.TS.restart()
+        ## Save initial mass (needed for the calculation of roughness)
+        self.mass_init = self.mass
         yield u.split(True)[0].vector()[:]
 
         # Step in time
@@ -516,15 +527,41 @@ class CahnHilliardVM(NonlinearProblem):
     #----------------------------------------
     def set_Solver(self, **kwargs):
         # Nonlinear solver
-        self.Solver = NewtonSolver()
+        # Print list of available FEniCS linear solvers and preconditioners 
+        if self.verbose:
+            list_linear_solver_methods()
+            list_krylov_solver_preconditioners()
+        ## Setup the nonlinear solver
+        # For avilable list of solvers check 
+        # https://bitbucket.org/fenics-project/dolfin/src/master/dolfin/nls/PETScSNESSolver.cpp 
+        # proved to be working:
+        # newtonls
+        # newtontr
+        self.Solver = PETScSNESSolver('newtontr')
+        #self.Solver = NewtonSolver()
         self.Solver.parameters["linear_solver"] = "lu"
-        # self.Solver.parameters["preconditioner"] = "amg"
-        if self.Solver.parameters["linear_solver"] != "lu":
-            self.Solver.parameters["preconditioner"] = "ilu"
-        self.Solver.parameters["convergence_criterion"] = "incremental" #"residual" #"incremental"
+        #self.Solver.parameters["linear_solver"] = "tfqm"
+        #self.Solver.parameters["linear_solver"] = "richardson"
+        #self.Solver.parameters["linear_solver"] = "bicgstab"
+        #self.Solver.parameters["linear_solver"] = "cg"
+        #self.Solver.parameters["linear_solver"] = "gmres"
+        #self.Solver.parameters["linear_solver"] = "umfpack"
+        #self.Solver.parameters["linear_solver"] = "mumps"
+        self.Solver.parameters["preconditioner"] = "default"
+        #self.Solver.parameters["preconditioner"] = "ilu"
+        #self.Solver.parameters["preconditioner"] = "hypre_euclid"
+        #self.Solver.parameters["preconditioner"] = "sor"
+        #self.Solver.parameters["preconditioner"] = "icc"
+        #self.Solver.parameters["preconditioner"] = "hypre_amg"
+        #self.Solver.parameters["preconditioner"] = "petsc_amg"
+        #if self.Solver.parameters["linear_solver"] != "lu":
+        #    self.Solver.parameters["preconditioner"] = "ilu"
+        #self.Solver.parameters["convergence_criterion"] = "residual" #"incremental"
+        #self.Solver.parameters["convergence_criterion"] ="incremental" #"residual" #"incremental"
         self.Solver.parameters["maximum_iterations"] = 1000
         self.Solver.parameters["relative_tolerance"] = 1e-6
-        # self.Solver.parameters["absolute_tolerance"] = 1.e-8
+        #self.Solver.parameters["krylov_solver"]["nonzero_initial_guess"] = True
+        self.Solver.parameters["absolute_tolerance"] = 1.e-8
         # self.Solver.parameters["error_on_nonconvergence"] = True
         self.Solver.parameters["report"] = self.verbose
 
@@ -593,7 +630,7 @@ class CahnHilliardVM(NonlinearProblem):
 
     @property
     def Energy(self):
-        return assemble(self._Energy)
+        return assemble(self._Energy, **self._fenics_assembly_pars )
 
     @property
     def HistoryEnergy(self):
@@ -628,28 +665,47 @@ class CahnHilliardVM(NonlinearProblem):
                 Muk.set_local(self.Modes[:,k+1])
                 # Muk[:] = self.Modes[:,k+1]
                 solve(D, v, Muk)
-                HistoryEnergy += d[k]/c[k] * 0.5*assemble(dot(grad(f.sub(0)),grad(f.sub(0)))*dx)
+                HistoryEnergy += d[k]/c[k] * 0.5*assemble(dot(grad(f.sub(0)),grad(f.sub(0)))*dx, **self._fenics_assembly_pars )
             # HistoryEnergy += 0.5*c_inf*assemble(self._FluxNorm)
             HistoryEnergy += 0.5*c_inf*FluxNorm
             return HistoryEnergy
 
+    @property
+    def Residual(self):
+        u = self.CurrSolFull.sub(0)
+        mu = self.CurrSolFull.sub(1)
+        lmbda = Constant(self.eps**2)
+        b1, b2  = self.TS.beta1, self.TS.beta2
+
+        P = self.phi1(u)*mu*dx + self.phi2(u)*mu*dx  + lmbda * dot(grad(u), grad(mu))*dx
+        Eq1 = u*u*dx + (b1+b2)*dot(grad(self.M(u)*mu ), grad(u))*dx
+        Eq2 = mu*mu*dx - P
+        return assemble(Eq1+Eq2, **self._fenics_assembly_pars )
+        # return assemble(self._Residual, **self._fenics_assembly_pars )
+        # return self.CurrSolFull.split(True)[0].vector()[:]-self.mass_init)
+        # return self.Energy + self.HistoryEnergy
+    
     @property
     def EnergyModified(self):
         return self.Energy + self.HistoryEnergy
 
     @property
     def EnergyGradNorm(self):
-        EGN = assemble(self._FluxNorm)
+        EGN = assemble(self._FluxNorm, **self._fenics_assembly_pars )
         return EGN
 
     @property
     def mass(self):
-        return assemble(self._mass)
+        return assemble(self._mass, **self._fenics_assembly_pars )
 
+    @property
+    def roughness(self):
+        return self.norm(self.CurrSolFull.split(True)[0].vector()[:]-self.mass_init)
+        
     def norm(self, v):
         f = Function(self.W)
         f.vector()[self.dofmap1.dofs()] = v[:]
-        sqr_norm_f = assemble(f.sub(0)*f.sub(0)*dx)
+        sqr_norm_f = assemble(f.sub(0)*f.sub(0)*dx, **self._fenics_assembly_pars )
         norm_f = np.sqrt(sqr_norm_f)
         return norm_f
 
@@ -667,6 +723,13 @@ class Exporter:
         self.name       = kwargs.get('Name', 'sol')
         if self.Folder:
             os.makedirs(self.Folder, exist_ok=True)
+            import pprint
+            from utils import save_dict2json
+            hash = save_dict2json(os.path.join(kwargs.get('ExportFolder', None),''),pprint.pformat(ProblemObj.config))
+            if self.FilePrefix.strip() == "":
+                self.FilePrefix = hash
+                if ProblemObj.verbose:
+                    print('Autogenerated export file prefix ("FilePrefix" parameter): ', hash) 
             self.vtk_file = File(os.path.join(self.Folder, self.FilePrefix +'sol.pvd'), "compressed")
 
     def test_export_every(self, export_every):

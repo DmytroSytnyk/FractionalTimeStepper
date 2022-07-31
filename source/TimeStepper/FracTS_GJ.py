@@ -30,6 +30,17 @@ class FracTS_GJ(BasicTS):
 
         self.compute_Coefficients(**kwargs)
         self.compute_AdamsMoultonCoefficients()
+        if self.verbose:
+            print()
+            print('=================================')
+            print('Fractional Derivative scheme: GJ')
+            print('=================================')
+            print('alpha:                ', self.alpha)
+            print('Scheme subtype:       ', self.Scheme[3:])
+            print('Quadrature type:      ', self.quad)
+            print('Number of modes:      ', self.nModes)
+            print('Number of time-steps: ', self.nTimeSteps)
+            print()
 
 
     #----------------------------------------------------------------------------------------

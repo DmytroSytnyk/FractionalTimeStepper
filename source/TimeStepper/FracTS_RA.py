@@ -44,10 +44,10 @@ class FracTS_RA(BasicTS):
             print('=================================')
             print('Fractional Derivative scheme: RA')
             print('=================================')
-            print('alpha:             ', self.alpha)
-            print('Scheme subtype:    ', self.Scheme[3:])
-            print('Number modes:      ', self.nModes)
-            print('Number time-steps: ', self.nTimeSteps)
+            print('alpha:                ', self.alpha)
+            print('Scheme subtype:       ', self.Scheme[3:])
+            print('Number of modes:      ', self.nModes)
+            print('Number of time-steps: ', self.nTimeSteps)
             print()
 
 

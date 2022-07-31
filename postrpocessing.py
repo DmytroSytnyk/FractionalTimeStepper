@@ -7,6 +7,16 @@ import random
 matplotlib.use('Agg')
 from matplotlib import pyplot as plt
 
+try:
+    import pyvista as pv
+    # import pyvistaqt as pvqt
+    have_pyvista = True
+    if pv.OFF_SCREEN:
+        pv.start_xvfb(wait=0.5)
+except ModuleNotFoundError:
+    print("pyvista and pyvistaqt are required to visualise the solution")
+    have_pyvista = False
+
 def plot_stuff(model_setting,QoIs,alpha_val,time,save_at):
     
     fig = plt.figure()
@@ -118,25 +128,25 @@ def plot_all(QoIs_left,QoIs_right,alpha_val,time,save_at):
 
 
 def pvd_set_nearest_t(reader, t):
-    if (t < 0):
+    if str(t).strip().lower() == "all":
+        return reader.time_values
+    elif (t < 0):
         # Use the first time point 
         reader.set_active_time_point(0)
+    elif isinf(float(t)):
+        reader.set_active_time_point(reader.number_time_points-1)
     else:
-        if isinf(float(t)):
-            reader.set_active_time_point(reader.number_time_points-1)
-        else:
-            t_idx = np.abs(np.array(reader.time_values)-t).argmin()
-            reader.set_active_time_point(t_idx)
+        t_idx = np.abs(np.array(reader.time_values)-t).argmin()
+        reader.set_active_time_point(t_idx)
     return reader.active_time_value
 
 def render_pvd2file_2d_color(filename, plottime, **kwargs):
-    import pyvista as pv
     pv.set_plot_theme('document')
     # Details are at https://docs.pyvista.org/api/readers/_autosummary/pyvista.PVDReader.html
     reader = pv.get_reader(filename)
     # Print available time values
     # print(reader.time_values)
-    t = pvd_set_nearest_t(reader,plottime)
+    times = pvd_set_nearest_t(reader,plottime)
     # if not plottime:
         # # Use the first time point 
         # reader.set_active_time_point(0)
@@ -147,39 +157,42 @@ def render_pvd2file_2d_color(filename, plottime, **kwargs):
         # else:
             # t_idx = np.abs(np.array(reader.time_values)-plottime).argmin()
             # reader.set_active_time_point(t_idx)
-    print(f"Plotting data for t = {t:.3f}") 
-    mesh = reader.read()[0]
-    # Print available point data
-    # print(mesh.point_data)  
-    # mesh.plot(cpos='xy')
-    plotter = pv.Plotter(off_screen=True)
-    datatitle = kwargs.get('datatitle','')
-    # Vertical color bar
-    sargs = dict(
-            title=datatitle,
-            height=0.67, 
-            vertical=True, 
-            position_x=0.15, 
-            position_y=0.16,
-            # Colorbar text properties
-            # title_font_size=20,
-            # label_font_size=16,
-            # shadow=True,
-            # n_labels=3,
-            # italic=True,
-            # fmt="%.1f",
-            # font_family="arial",
-            )
-    plotter.add_mesh(mesh, cmap='jet', scalar_bar_args=sargs)
-    plotter.camera_position='xy'
-    # plotter.background_color='white'
-    # import pdb; pdb.set_trace()    
-    filetitle = kwargs.get('filetitle', "Solution at {:.4f}".format(reader.active_time_value))
-    prefix,_ = os.path.splitext(filename)
-    outputfile = kwargs.get('outputfile', "{:s}_t_{:.4f}".format(prefix,reader.active_time_value))
-    outputformat = kwargs.get('outputformat', 'eps')
- 
-    plotter.save_graphic(outputfile + '.' + outputformat , title=filetitle)
+    for t in times:
+        print(f"Plotting data for t = {t:.3f}") 
+        mesh = reader.read()[0]
+        reader.set_active_time_value(t)
+        # Print available point data
+        # print(mesh.point_data)  
+        # mesh.plot(cpos='xy')
+        plotter = pv.Plotter(off_screen=True)
+        datatitle = kwargs.get('datatitle','')
+        # Vertical color bar
+        sargs = dict(
+                title=datatitle,
+                height=0.67, 
+                vertical=True, 
+                position_x=0.15, 
+                position_y=0.16,
+                # Colorbar text properties
+                # title_font_size=20,
+                # label_font_size=16,
+                # shadow=True,
+                # n_labels=3,
+                # italic=True,
+                # fmt="%.1f",
+                # font_family="arial",
+                )
+        plotter.add_mesh(mesh, cmap='jet', scalar_bar_args=sargs)
+        plotter.camera_position='xy'
+        # plotter.background_color='white'
+        # import pdb; pdb.set_trace()    
+        filetitle = kwargs.get('filetitle', "Solution at {:.4f}".format(reader.active_time_value))
+        prefix,_ = os.path.splitext(filename)
+        outputfile = kwargs.get('outputfile', "{:s}_t_{:.4f}".format(prefix,reader.active_time_value))
+        outputformat = kwargs.get('outputformat', 'eps')
+     
+        plotter.save_graphic(outputfile + '.' + outputformat , title=filetitle)
+        plotter.close()
 
 def plot_pvd_2d_color(filename, plottime, dataname):
     import pyvista as pv

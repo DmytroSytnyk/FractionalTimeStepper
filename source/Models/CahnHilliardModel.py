@@ -94,7 +94,7 @@ class CahnHilliard(NonlinearProblem):
         set_log_active(self.verbose)
         # set_log_level(40)
 
-        ### Spatial dimension
+        ### Spacial dimension
         self.ndim = kwargs.get('ndim', 2)
         
         ### Time-stepper
