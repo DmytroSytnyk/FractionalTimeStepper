@@ -407,7 +407,8 @@ class CahnHilliardVM(NonlinearProblem):
         self._mass     = c*dx
         # self._Energy1  = (Phi1(c)+Phi2(c))*dx + 0.5*lmbda*dot(grad(c), grad(c))*dx
         self._Energy   = Phi(c)*dx + 0.5*lmbda*dot(grad(c), grad(c))*dx
-
+        # import pdb; pdb.set_trace()    
+        print(parameters.str(self.verbose))
 
 
 

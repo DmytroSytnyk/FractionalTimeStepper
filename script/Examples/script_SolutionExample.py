@@ -91,7 +91,7 @@ print('alpha  : {0}'.format(pb.alpha))
 print('dt     : {0}'.format(pb.dt))
 
 ExactSolution = list(pb(ReferenceSolution=True))
-AppxSolution  = pb()  ### Numerical solution: generaor, to get a list, call [pb()]
+AppxSolution  = pb()  ### Numerical solution: generator, to get a list, call [pb()]
 
 ### Time integration
 for i, u in enumerate(AppxSolution):
