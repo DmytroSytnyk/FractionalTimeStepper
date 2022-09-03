@@ -1,0 +1,768 @@
+# import random
+import numpy as np
+import random
+from dolfin import *
+from tqdm import tqdm
+from copy import copy
+from scipy.special import gamma
+import sys, os
+
+from source.TimeStepper import FracTS_RA, FracTS_L1
+
+
+###########################################
+# Change log levele for FEniCS
+
+import logging
+ffc_logger = logging.getLogger('FFC')
+print('Change FFC log level to Warning')
+print('Log level was:', logging.getLevelName(ffc_logger.getEffectiveLevel()))
+ffc_logger.setLevel(logging.WARNING)
+print('Log level is now:', logging.getLevelName(ffc_logger.getEffectiveLevel()))
+###########################################
+
+###########################################
+# Form compiler options
+# are supposed to be defined in the caller script
+
+parameters["form_compiler"]["optimize"]     = True
+parameters["form_compiler"]["cpp_optimize"] = True
+parameters["form_compiler"]["cpp_optimize_flags"] = "-O3 -ffast-math -march=native"
+
+###########################################
+
+# Class representing the intial conditions
+class InitialConditions(UserExpression):
+    def __init__(self, **kwargs):
+        # random.seed(2 + MPI.rank(MPI.comm_world))
+        np.random.seed(0)
+        self.nModes = 10
+        self.corrlen = 0.2
+        self.k0 = np.arange(self.nModes)
+        self.k1 = np.arange(self.nModes)
+        self.coefs  = np.random.normal(loc=0, scale=1/self.nModes**2, size=(self.nModes,self.nModes)) #* np.exp(-self.k0**2/(2*self.corrlen**2)) + self.k1**2))
+        self.G0 = np.exp(-self.k0**2 * self.corrlen**2/2)
+        self.G1 = np.exp(-self.k1**2 * self.corrlen**2/2)
+        super().__init__(**kwargs)
+    def eval(self, values, x):
+        # ptb = 1/100
+        # for i in range(len(x)):
+        #     ptb *= cos(2 * pi * x[i])
+        # values[0] =  1/50*(cos(2*pi*x[1])  + cos(2*pi*x[0])) #0.02*(0.5 - np.random.random())
+        # values[0] = np.random.normal(loc=0.4, scale=0.01)
+        # values[0] = 0.4 + 0.2*(0.5 - np.random.random())
+        # values[0] = np.random.random()
+        # values[0] =  0.4+1/50*(cos(1/4*pi*x[1])  + cos(4*pi*x[0]))
+        # values[0] = np.random.normal(loc=0.5, scale=0.001)
+        # values[0] = (np.cos(pi*self.k0*x[0])*self.G0) @ self.coefs @ (np.cos(pi*self.k1*x[1])*self.G1)
+        #####################################################
+        # IC enabled by default in Ustim's code
+        #####################################################
+        values[0] =  0.4 + 1/50 * cos(2*pi*x[0]) * cos(2*pi*x[1]) # * cos(2*pi*x[2])
+        values[1] = 0.0
+        values[2] = 0.0
+        #####################################################
+        ## Purely random IC (taken from the Marnvin's code ##
+        #####################################################
+        #values[0] = 0.002*(0.5 - random.random()) #ICSmooth(x, 0.2501)
+        # NOTE: By definition \mu_0 = \Psi'(\phi_0) - \varepsilon^2 \Delta \psi
+        #values[1] = 0.0 
+    def value_shape(self):
+        return (3,)
+
+class IC_TwoBubbles(UserExpression):
+    def __init__(self, **kwargs):
+        self.c = [ (0.5-0.2, 0.5), (0.5+0.2, 0.5) ]
+        # self.c = [ (0.5-0.2, 0.5-0.2), (0.5+0.2, 0.5-0.2), (0.5+0.2, 0.5+0.2), (0.5-0.2, 0.5+0.2) ]
+        self.r = 0.15
+        self.eps = kwargs.pop('eps', 0.03)
+        super().__init__(**kwargs)
+    def eval(self, values, x):
+        v = len(self.c)-1
+        for c in self.c:
+            r = sqrt( (x[0]-c[0])**2 + (x[1]-c[1])**2 )
+            v += np.tanh((self.r-r)/(sqrt(2)*self.eps))
+        values[0] = v
+        values[1] = 0.0 
+        values[2] = 0.0 
+    def value_shape(self):
+        return (3,)
+
+class IC_FourBubbles(UserExpression):
+    def __init__(self, **kwargs):
+        d = 0.2
+        self.c = [ (0.5-d, 0.5-d), (0.5+d, 0.5-d), (0.5+d, 0.5+d), (0.5-d, 0.5+d) ]
+        self.r = 0.15
+        self.eps = kwargs.pop('eps', 0.03)
+        super().__init__(**kwargs)
+    def eval(self, values, x):
+        v = len(self.c)-1
+        for c in self.c:
+            r = sqrt( (x[0]-c[0])**2 + (x[1]-c[1])**2 )
+            v += np.tanh((self.r-r)/(sqrt(2)*self.eps))
+        values[0] = v
+        values[1] = 0.0 
+        values[2] = 0.0 
+    def value_shape(self):
+        return(3,)
+
+class IC_BubbleSoup(UserExpression):
+    def __init__(self, **kwargs):
+        seed = kwargs.pop('seed',0)
+        np.random.seed(seed)
+        n  = kwargs.pop('n', 3)
+        self.eps = kwargs.pop('eps', 0.03)
+        R  = min(0.5, max(0.02,kwargs.pop('R', 0.2)))
+        r  = max(0.02, kwargs.pop('r', 0.04))
+        R = max(R,r); 
+        r = min(R,r)
+        # Generate rundom bubbles
+        self.bR = r + np.random.rand(n)*(R-r)
+        self.bC = np.random.rand(2, n)*(np.ones((2,n)) - 2*self.bR)+self.bR;
+        self.bn = n;
+        super().__init__(**kwargs)
+    def eval(self, values, x):
+        vr = self.bC - np.tile([[x[0]],[x[1]]],(1,self.bn))
+        r = np.linalg.norm(vr,axis=0,ord=2)
+        # The values is assumed to be between -1 and 1 so one has to divide by the number of bubbles
+        values[0]  = sum(np.tanh((self.bR-r)/(sqrt(2)*self.eps)))+self.bn-1
+        # Make sure that values is within [-1,1]
+        # This is necessary if bubbles overlap
+        values[0]  = max(-1,min(1,values[0])) 
+        values[1] = 0.0 
+        values[2] = 0.0 
+    def value_shape(self):
+        return(3,)
+
+class IC_RandomField(UserExpression):
+    def __init__(self, **kwargs):
+        seed = kwargs.pop('seed', 0)
+        self.eps  = kwargs.pop('eps', 0.002)
+        self.c    = kwargs.pop('center', 0.5)
+        np.random.seed(seed)
+        super().__init__(**kwargs)
+    def eval(self, values, x):
+        values[0] = self.eps*(self.c - random.random()) #ICSmooth(x, 0.2501)
+        values[1] = 0.0 
+        values[2] = 0.0 
+    def value_shape(self):
+        return(3,)
+
+class IC_LinearCombination(UserExpression):
+    def __init__(self, **kwargs):
+        IC_Names = ('IC_TwoBubbles', 'IC_FourBubbles', 'IC_BubbleSoup', 'IC_RandomField')
+        n  = kwargs.pop('n', 1)
+        self.ICs = []
+        w = np.array(kwargs.pop('IC_weights', (1)))
+        self.ICweights = w/w.sum()
+        for i in range(1,n+1):
+            _IC = kwargs.pop(f'IC{i}', '')
+            if _IC in IC_Names:
+                _IC_Pars = kwargs.pop(f'IC{i}_Parameters', '')
+                self.ICs.append(eval(_IC+'(**' + str(_IC_Pars) + ')'))
+            else:
+                raise Exception(f'IC {_IC} is unknows. Use one of {IC_Names}')
+        super().__init__(**kwargs)
+    def eval(self, values, x):
+        values[0] = 0; values[1] = 0; values[2] = 0
+        v = values.copy()
+        for i,IC in enumerate(self.ICs):
+            IC.eval(v,x)
+            # import pdb; pdb.set_trace()    
+            values += v*self.ICweights[i]
+    def value_shape(self):
+        return(3,)
+###########################################
+
+
+class CahnHilliardR(NonlinearProblem):
+
+    def __init__(self, **kwargs):
+        NonlinearProblem.__init__(self)
+        # Save config before it get's modified
+        self.config = kwargs
+
+        self.verbose = kwargs.get('verbose', False)
+        set_log_active(self.verbose)
+        # set_log_level(40)
+
+        ### Spatial dimension
+        self.ndim = kwargs.get('ndim', 2)
+        
+        ### Time-stepper
+        self.TS = self.set_TimeStepper(**kwargs)
+        b1, b2  = self.TS.beta1, self.TS.beta2
+
+        ### Exports
+        self.Exporter = Exporter(self, **kwargs)
+
+        ###--------------------------------------------------------
+
+        ### Parameters
+        zeros = kwargs.get("zeros", [-1,1])
+        self.eps   = kwargs.get('eps', 1.e-1)    # surface parameter
+        lmbda = Constant(self.eps**2)
+
+        ### Chemical potential derivative
+        if zeros==[0,1]:
+            _Phi  = eval(kwargs.get('Phi',  'lambda x: 0.25 * (1-x**2)**2'          ))
+            _phi1 = eval(kwargs.get('phi1', 'lambda x: 0.25 * (3 * x)'              ))   ### convex part
+            _phi2 = eval(kwargs.get('phi2', 'lambda x: 0.25 * (4*x*x*x - 6*x*x - x)'))   ### concave part
+        elif zeros==[-1,1]:
+            _Phi  = eval(kwargs.get('Phi',  'lambda x: 0.25 * (1-x**2)**2'    ))
+            _phi1 = eval(kwargs.get('phi1', 'lambda x: 0.25 * (8 * x)'        ))  ### convex part
+            _phi2 = eval(kwargs.get('phi2', 'lambda x: 0.25 * (4*x**3 - 12*x)'))  ### concave part
+        else:
+            raise Exception('Don\'t know these zeros.')
+        ### String representation of phi1 is needed for linear solver assembly
+        sphi1 = kwargs.get('phi1')   
+        if not callable(_Phi):
+            self.Phi  = lambda x: _Phi
+        else:
+            self.Phi  = _Phi
+        if not callable(_phi1):
+            self.phi1 = lambda x: _phi1
+        else:
+            self.phi1 = _phi1
+            sphi1 = sphi1.replace('lambda x:','')
+        if not callable(_phi2):
+            self.phi2 = lambda x: _phi2
+        else:
+            self.phi2 = _phi2
+        
+        ### Mobility
+        _M = eval(kwargs.get('M', 'lambda x: (1-x**2)**2'))
+        if not callable(_M):
+            self.M = lambda x: Constant(_M)
+        else:
+            self.M = _M
+
+        ### Derivative of mobility
+        _Md = eval(kwargs.get('Md', 'lambda x: -4*x*(1-x**2)'))
+        if not callable(_Md):
+            self.Md = lambda x: Constant(_Md)
+        else:
+            self.Md = _Md
+
+        ### At the beginning the initial mass is unknown
+        self.mass_init = float('nan')
+
+        ### Mesh
+        self.Nx   = kwargs.get('Nx', 2**5)    # number of grid points in space (one direction)
+        self.ndim = kwargs.get('ndim', 2)
+        if self.ndim == 2:
+            self.mesh = UnitSquareMesh.create(self.Nx, self.Nx, CellType.Type.quadrilateral)
+        elif self.ndim == 3:
+            self.mesh = UnitCubeMesh.create(self.Nx, self.Nx, self.Nx, CellType.Type.hexahedron)
+        else:
+            raise Exception('The dimension is not implemented!')
+
+        ### FEniCS related options
+        self._fenics_assembly_pars = dict(form_compiler_parameters = {"quadrature_degree": 1}) 
+
+        
+        ### Function space
+        fg_PerBC = kwargs.get('PerBC', False)
+        if fg_PerBC:
+            ### Periodic BCs
+            BC = PeriodicBoundary(ndim=self.ndim)
+            P1 = FiniteElement("Lagrange", self.mesh.ufl_cell(), 1)
+            self.V1 = FunctionSpace(self.mesh, P1, constrained_domain=BC)
+            # Note that the function space V1_vec will represent gradients of V1 hence the use of DG0 elements
+            # self.V1_vec = VectorFunctionSpace(self.mesh, "DG", 0, constrained_domain=BC)
+            self.V2 = FunctionSpace(self.mesh, P1, constrained_domain=BC)
+            self.V3 = FunctionSpace(self.mesh, P1, constrained_domain=BC)
+            W = FunctionSpace(self.mesh, MixedElement([P1, P1, P1]), constrained_domain=BC)
+            self.W = W
+        else:
+            ### Homogeneous Neumann BCs
+            P1 = FiniteElement("Lagrange", self.mesh.ufl_cell(), 1)
+            W = FunctionSpace(self.mesh, MixedElement([P1, P1, P1]))
+            self.W = W
+            self.V1 = W.sub(0).collapse()
+            # Note that the function space V1_vec witll represent gradients of V1 hence the use of DG0 elements
+            # self.V1_vec = VectorFunctionSpace(self.mesh, "DG", 0)
+            self.V2 = W.sub(1).collapse()
+            self.V3 = W.sub(2).collapse()
+        self.v2d = vertex_to_dof_map(self.V1)
+        self.dofmap1 = self.W.sub(0).dofmap()
+        self.dofmap2 = self.W.sub(1).dofmap()
+        self.dofmap3 = self.W.sub(2).dofmap()
+
+
+        # Define trial and test functions
+        du      = TrialFunction(W)
+        q, v, _ = TestFunctions(W)
+
+        # Define functions
+        u   = Function(W)  # current solution
+        u0  = Function(W)  # solution from previous converged step
+        u1  = Function(W)  # solution from one step before previous converged step
+        # S   = Function(self.V1_vec)  # Function that holds the values of the gradient integral term
+        # S0  = Function(self.V1_vec)  # Function that holds the values of the previous gradient integral term
+        self.PrevSolFull = [u0, u1]
+        self.CurrSolFull = u
+
+        # Split mixed functions
+        dc, dmu, deta = split(du)
+        c,  mu, eta   = split(u)
+        c0, mu0, eta0 = split(u0)
+        # We only need concentration from two steps before
+        c1 = split(u1)[0];
+        self.PrevSol = [c0, c1]
+        self.CurrSol = c
+
+        # Create initial conditions and interpolate
+        IC = eval(kwargs.get('IC'))
+        ICParameters = kwargs.get('ICParameters',{})
+        if isinstance(IC, np.ndarray):
+            u.vector()[self.dofmap1.dofs()]  = IC
+            u0.vector()[self.dofmap1.dofs()] = IC
+        else:            
+            u_init = IC(**(ICParameters | {'degree': 1}))
+            u.interpolate(u_init)
+            u0 = u.copy(deepcopy=True)
+            # u0.interpolate(u_init)
+        # self.c_init = u.split(True)[0].vector()[self.v2d]
+        
+        self.c_init, self.mu_init, self.eta_init = u0.split(deepcopy=True)
+        # Solve auxiliary problem to determine m0, eta0 (eta0 part is untested)
+        if kwargs.get('autotune_mu0',False):
+            u_V2 = Function(self.V1)
+            u_V2.assign(self.c_init)
+            # u_V2 =project(u1_sol,self.V2.collapse()) # This gives error on the order of machine precission
+            # # DEBUG: Check if u_V2 and u1_sol coincide
+            # print(max(u1_sol.vector()-u_V2.vector()))
+            mu_V2  = Function(self.V2); 
+            dmu_V2 = TrialFunction(self.V2) 
+            v_V2   = TestFunction(self.V2)
+            A0     = inner(dmu_V2,v_V2)*dx
+            L0     = (self.phi1(u_V2) + self.phi2(u_V2))*v_V2*dx + lmbda*dot(grad(u_V2),grad(v_V2))*dx
+            solve(assemble(A0), mu_V2.vector(), assemble(L0), "gmres", "ilu")
+            # Test solution accuracy by calculating the residue
+            m0_res = assemble((mu_V2*mu_V2 - (self.phi1(u_V2) + self.phi2(u_V2))*mu_V2-lmbda*dot(grad(u_V2),grad(mu_V2)))*dx)
+            self.mu_init.assign(mu_V2)
+            if self.verbose:
+                print(f'Residue of calculated initial condition for mu is {m0_res}')
+            self.eta_init.vector()[:] = 0
+
+        ###-----------------------------------
+        ### Weak statement of the equations
+        ###-----------------------------------
+
+        self.fg_LinearSolve = kwargs.get('LinSolve', False)
+
+        Phi  = self.Phi
+        phi1 = self.phi1
+        phi2 = self.phi2
+        M    = self.M
+        Md   = self.Md
+        dt   = self.dt
+        if self.fg_LinearSolve:
+            ###----------------------------
+            ### Linear case assembly
+            ###----------------------------
+
+            self.set_LinSolver(**kwargs)
+
+            v1, v2, v3  = TrialFunctions(W)
+            w1, w2, w3  = TestFunctions(W)
+
+            #Assemble the S_n that contains the gradient integral     
+            #https://fenicsproject.org/qa/12634/gradient-of-a-cg-order-one-element/
+            self.S0 = Vector(u0.vector())
+            self.S0.zero()                                        # S0 is zero at the beginning
+            import pdb; pdb.set_trace()    
+            self._S = dot(Md(c0)*(c0-c1)*grad(eta),grad(w1))*dx
+
+            K = v1*w1*dx + dot(M(c0)*grad(v3),grad(w1))*dx - dot(Md(c0)*(c0-c1)*grad(v3),grad(w1))*dx\
+              + v2*w2*dx - eval(sphi1.replace('x','v1'))*w2*dx - lmbda * dot(grad(v1), grad(w2))*dx \
+              + v3*w3*dx - (b1+b2)*v2*w3*dx  
+            self.StiffnessMatrix = assemble(K) 
+            self._RHS = self.c_init*w1*dx + phi2(c0)*w2*dx 
+
+            ### Initialize history term and modes (in numpy vector terms)
+            v1m, w1m = TrialFunction(self.V1), TestFunction(self.V1)
+            v2m, w2m = TrialFunction(self.V2), TestFunction(self.V2)
+            v3m, w3m = TrialFunction(self.V3), TestFunction(self.V3)
+
+            self.Modes      = np.zeros([len(self.dofmap3.dofs()), self.TS.nModes+1])
+            self.History    = self.Modes @ self.TS.gamma_k
+
+            # Solve the suplementary equations from the system for Modes
+            self.Modes_EqS_Matrix    = assemble(v2m*w2m*dx)
+            if   self.TS.Scheme[3:] == 'mIE':
+                self.Modes_EqS_LF  = (phi1(c) + phi2(c0))*w2m*dx + lmbda * dot(grad(c), grad(w2m))*dx
+            elif self.TS.Scheme[3:] == 'mCN':
+                self.Modes_EqS_LF  = (phi1(c) + phi2(c))*w2m*dx + lmbda * dot(grad(c), grad(w2m))*dx
+            else:
+                raise Exception('Unknown scheme! Please set "scheme" parameter in the format "RA:mIE" or "RA:mCN".')
+            self.mu    = Function(self.V2)
+            self.mu0   = Function(self.V2)
+            self.mu.vector()[:]  = 0
+            self.mu0.vector()[:] = 0
+            self.mu0.vector().set_local(self.mu.vector()[:])
+            Modes_EqS_RHS= assemble(self.Modes_EqS_LF)
+            self.Modes_LinSolver.solve(self.Modes_EqS_Matrix, self.mu.vector(), Modes_EqS_RHS)
+            # self._CurrFlux = dot(M(c0)*grad(mu), grad(w1m))*dx
+            # self._PrevFlux = dot(M(c0)*grad(mu0), grad(w1m))*dx
+            self.Modes_Eq_muMatrix = assemble(v2m*w3m*dx)
+            self._FluxNorm  = dot(M(c0)*grad(self.mu), grad(self.mu))*dx
+
+        else:
+            ###----------------------------
+            ### General case assembly
+            ###----------------------------
+
+            ### Solver
+            self.set_Solver(**kwargs)
+            raise Exception('Nonlinear solution scheme is not implemented!')
+        ###----------------------------------------------------------
+        
+        ### Other quantities
+        self._mass     = c*dx
+
+        # self._roughness = ((c - self.mass_init)**2)*dx
+
+        # self._Energy1  = (Phi1(c)+Phi2(c))*dx + 0.5*lmbda*dot(grad(c), grad(c))*dx
+        self._Energy   = Phi(c)*dx + 0.5*lmbda*dot(grad(c), grad(c))*dx
+        # Print FEniCS parameters
+        print(parameters.str(self.verbose))
+
+
+
+
+        ###-----------------------------------------------------------
+
+    def F(self, b, x):
+        assemble(self._Residual, tensor=b)
+        b[:] = b - self.History
+
+    def J(self, A, x):
+        assemble(self.Jacobian, tensor=A)
+
+    def update_history_and_s(self):
+        if self.scheme[:2] == 'RA': 
+            if self.fg_LinearSolve:
+                # Calculate current value of S and save it as a previous for the next step
+                self.S0 += assemble(self._S) 
+                # In the case of parallel runtime the next code operatos on the locally-owned 
+                # part of solution
+                mu0 = self.mu.vector().get_local();
+                Modes_EqS_RHS = assemble(self.Modes_EqS_LF)
+                self.Modes_LinSolver.solve(self.Modes_EqS_Matrix, self.mu.vector(), Modes_EqS_RHS)
+                mu = self.mu.vector().get_local();
+                g_k, b1_k, b2_k = self.TS.gamma_k, self.TS.beta1_k, self.TS.beta2_k
+                self.Modes[:]   = g_k*self.Modes - b1_k*np.reshape(self.Modes_Eq_muMatrix*mu,(-1,1)) + b2_k*np.reshape(self.Modes_Eq_muMatrix*mu0,(-1,1))
+                self.History[:] = self.Modes @ g_k
+                self.mu0.vector().set_local(mu0)
+                # Make sure that MPI vector is assembled properly
+                # Only needed (presumably) for parallel runtime 
+                self.mu0.vector().apply("insert")                    
+            else:
+                raise Exception('Nonlinear solution scheme is not implemented!')
+        else:
+            raise Exception('Unknown time-stepping scheme. Please use RA:XXX or L1:XXX, with XXX being "mIE", "mCN"')
+
+    def __call__(self):
+        u, u0, u1 = self.CurrSolFull, self.PrevSolFull[0], self.PrevSolFull[1]
+
+        ### yield initial solution
+        self.TS.restart()
+        ## Save initial mass (needed for the calculation of roughness)
+        self.mass_init = self.mass
+        yield u.split(True)[0].vector()[:]
+
+        # Step in time
+        if self.fg_LinearSolve:
+            while self.TS.inc():    
+                # Shift the solution values one step back in time
+                u1.vector().set_local(u0.vector().get_local())
+                u0.vector().set_local(u.vector().get_local())
+                # Update RHS of the system 
+                RHS = assemble(self._RHS) + self.S0
+                RHS[self.dofmap3.dofs()] += self.History
+                # Solve
+                self.LinSolver.solve(self.StiffnessMatrix, u.vector(), RHS)
+                # Update history, modes and the cumulative itegral S0
+                self.update_history_and_s()
+                yield u.split(True)[0].vector()[:]
+        else:
+            while self.TS.inc():    
+                # Shift the solution values one step back in time
+                u1.vector().set_local(u0.vector().get_local())
+                u0.vector().set_local(u.vector().get_local())
+                self.Solver.solve(self, u.vector())
+                self.update_history_and_s()
+                yield u.split(True)[0].vector()[:]
+    
+    ### Solution iterator (time-integration)
+    def SolutionIterator(self):
+        return tqdm(enumerate(self()), total=self.TS.nTimeSteps)
+
+
+    #----------------------------------------
+    # Fractional Time Stepper
+    #----------------------------------------
+    def set_TimeStepper(self, **kwargs):
+        scheme = kwargs.get('scheme', 'RA')[:2]
+        if scheme == 'L1':
+            self.TS = FracTS_L1(**kwargs)
+        elif scheme == 'RA':
+            self.TS = FracTS_RA(**kwargs)          
+        elif scheme == 'GJ':
+            self.TS = FracTS_GJ(**kwargs)
+        else:
+            raise Exception('Wrong timestepper scheme {0:s}'.format(scheme))
+        self.scheme = scheme
+        self.dt = self.TS.dt
+        self.T  = self.TS.TimeInterval
+        return self.TS
+
+    #----------------------------------------
+    # NL Solver
+    #----------------------------------------
+    def set_Solver(self, **kwargs):
+        # Nonlinear solver
+        # Print list of available FEniCS linear solvers and preconditioners 
+        if self.verbose:
+            list_linear_solver_methods()
+            list_krylov_solver_preconditioners()
+        ## Setup the nonlinear solver
+        # For avilable list of solvers check 
+        # https://bitbucket.org/fenics-project/dolfin/src/master/dolfin/nls/PETScSNESSolver.cpp 
+        # proved to be working:
+        # newtonls
+        # newtontr
+        self.Solver = PETScSNESSolver('newtontr')
+        #self.Solver = NewtonSolver()
+        self.Solver.parameters["linear_solver"] = "lu"
+        #self.Solver.parameters["linear_solver"] = "tfqm"
+        #self.Solver.parameters["linear_solver"] = "richardson"
+        # self.Solver.parameters["linear_solver"] = "bicgstab"
+        #self.Solver.parameters["linear_solver"] = "cg"
+        #self.Solver.parameters["linear_solver"] = "gmres"
+        #self.Solver.parameters["linear_solver"] = "umfpack"
+        #self.Solver.parameters["linear_solver"] = "mumps"
+        # self.Solver.parameters["preconditioner"] = "default"
+        self.Solver.parameters["preconditioner"] = "ilu"
+        #self.Solver.parameters["preconditioner"] = "hypre_euclid"
+        #self.Solver.parameters["preconditioner"] = "sor"
+        #self.Solver.parameters["preconditioner"] = "icc"
+        #self.Solver.parameters["preconditioner"] = "hypre_amg"
+        #self.Solver.parameters["preconditioner"] = "petsc_amg"
+        #if self.Solver.parameters["linear_solver"] != "lu":
+        #    self.Solver.parameters["preconditioner"] = "ilu"
+        #self.Solver.parameters["convergence_criterion"] = "residual" #"incremental"
+        #self.Solver.parameters["convergence_criterion"] ="incremental" #"residual" #"incremental"
+        self.Solver.parameters["maximum_iterations"] = 1000
+        self.Solver.parameters["relative_tolerance"] = 1e-6
+        #self.Solver.parameters["krylov_solver"]["nonzero_initial_guess"] = True
+        self.Solver.parameters["absolute_tolerance"] = 1.e-8
+        # self.Solver.parameters["error_on_nonconvergence"] = True
+        self.Solver.parameters["report"] = self.verbose
+
+        ### Linear solver
+        # LinSolver = PETScKrylovSolver("cg", "amg")
+        LinSolver = PETScLUSolver("mumps")
+        # LinSolver = PETScKrylovSolver("gmres", "ilu")
+        # # LinSolver = PETScKrylovSolver("cg", "amg")
+        # LinSolver.parameters["maximum_iterations"] = 1000
+        # LinSolver.parameters["relative_tolerance"] = 1.e-10
+        # LinSolver.parameters["absolute_tolerance"] = 1.e-8
+        # LinSolver.parameters["error_on_nonconvergence"] = True
+        # LinSolver.parameters["nonzero_initial_guess"] = True
+        # LinSolver.parameters["monitor_convergence"] = False
+        self.LinSolver  = LinSolver
+
+        self.LinSolverMu = PETScLUSolver("mumps") #PETScKrylovSolver("cg", "icc")
+        # self.LinSolverMu.parameters["maximum_iterations"] = 1000
+        # self.LinSolverMu.parameters["relative_tolerance"] = 1.e-10
+        # self.LinSolverMu.parameters["absolute_tolerance"] = 1.e-8
+        # self.LinSolverMu.parameters["error_on_nonconvergence"] = True
+        # self.LinSolverMu.parameters["nonzero_initial_guess"] = True
+        # self.LinSolverMu.parameters["monitor_convergence"] = False
+
+
+    #----------------------------------------
+    # Linear Solver
+    #----------------------------------------
+    def set_LinSolver(self, **kwargs):
+
+        ### Linear solver
+        self.LinSolver = PETScLUSolver("mumps")
+        # self.LinSolver = PETScKrylovSolver("gmres", "ilu")
+        # # # LinSolver = PETScKrylovSolver("cg", "amg")
+        # # LinSolver.parameters["maximum_iterations"] = 1000
+        # self.LinSolver.parameters["relative_tolerance"] = 1.e-12
+        # self.LinSolver.parameters["absolute_tolerance"] = 1.e-12
+        # # LinSolver.parameters["error_on_nonconvergence"] = True
+        # self.LinSolver.parameters["nonzero_initial_guess"] = True
+        # # LinSolver.parameters["monitor_convergence"] = False
+
+        # self.LinSolverM2 = PETScLUSolver("mumps") #PETScKrylovSolver("cg", "icc")
+        # self.LinSolverMu.parameters["maximum_iterations"] = 1000
+        # self.LinSolverMu.parameters["relative_tolerance"] = 1.e-10
+        # self.LinSolverMu.parameters["absolute_tolerance"] = 1.e-8
+        # self.LinSolverMu.parameters["error_on_nonconvergence"] = True
+        # self.LinSolverMu.parameters["nonzero_initial_guess"] = True
+        # self.LinSolverMu.parameters["monitor_convergence"] = False
+
+
+        self.Modes_LinSolver = PETScLUSolver("mumps")
+        # self.Modes_LinSolver = PETScKrylovSolver("cg", "icc")
+        # self.Modes_LinSolver.parameters["relative_tolerance"] = 1.e-12
+        # self.Modes_LinSolver.parameters["absolute_tolerance"] = 1.e-12
+        # self.Modes_LinSolver.parameters["nonzero_initial_guess"] = True
+
+
+
+        self.LinSolverD = PETScKrylovSolver("gmres", "petsc_amg")
+        # self.LinSolverD = PETScKrylovSolver("cg", "icc")
+
+
+
+    #----------------------------------------------------------------------
+    # Prperties and postprocessing
+    #----------------------------------------------------------------------
+
+    @property
+    def Energy(self):
+        return assemble(self._Energy, **self._fenics_assembly_pars )
+
+
+    @property
+    def Residual(self):
+        # u = self.CurrSolFull.sub(0)
+        # mu = self.CurrSolFull.sub(1)
+        # lmbda = Constant(self.eps**2)
+        # b1, b2  = self.TS.beta1, self.TS.beta2
+
+        # P = self.phi1(u)*mu*dx + self.phi2(u)*mu*dx  + lmbda * dot(grad(u), grad(mu))*dx
+        # Eq1 = u*u*dx + (b1+b2)*dot(grad(self.M(u)*mu ), grad(u))*dx
+        # Eq2 = mu*mu*dx - P
+        return assemble(Eq1+Eq2, **self._fenics_assembly_pars )
+        # return assemble(self._Residual, **self._fenics_assembly_pars )
+        # return self.CurrSolFull.split(True)[0].vector()[:]-self.mass_init)
+        # return self.Energy + self.HistoryEnergy
+    
+    @property
+    def EnergyModified(self):
+        return self.Energy + self.HistoryEnergy
+
+    @property
+    def EnergyGradNorm(self):
+        EGN = assemble(self._FluxNorm, **self._fenics_assembly_pars )
+        return EGN
+
+    @property
+    def mass(self):
+        return assemble(self._mass, **self._fenics_assembly_pars )
+
+    @property
+    def roughness(self):
+        return self.norm(self.CurrSolFull.split(True)[0].vector()[:]-self.mass_init)
+        
+    def norm(self, v):
+        f = Function(self.W)
+        f.vector()[self.dofmap1.dofs()] = v[:]
+        sqr_norm_f = assemble(f.sub(0)*f.sub(0)*dx, **self._fenics_assembly_pars )
+        norm_f = np.sqrt(sqr_norm_f)
+        return norm_f
+
+
+#===========================================================
+#   Helpers
+#===========================================================
+
+class Exporter:
+
+    def __init__(self, ProblemObj, **kwargs):
+        self.ProblemObj = ProblemObj
+        self.Folder     = kwargs.get('ExportFolder', None)
+        self.FilePrefix = kwargs.get('FilePrefix', '')
+        self.name       = kwargs.get('Name', 'sol')
+        if self.Folder:
+            os.makedirs(self.Folder, exist_ok=True)
+            import pprint
+            from utils import save_dict2json
+            hash = save_dict2json(os.path.join(kwargs.get('ExportFolder', None),''),pprint.pformat(ProblemObj.config))
+            if self.FilePrefix.strip() == "":
+                self.FilePrefix = hash
+                if ProblemObj.verbose:
+                    print('Autogenerated export file prefix ("FilePrefix" parameter): ', hash) 
+            self.vtk_file = File(os.path.join(self.Folder, self.FilePrefix +'sol.pvd'), "compressed")
+
+    def test_export_every(self, export_every):
+        if export_every is None:
+            return True
+        else:
+            t = self.ProblemObj.TS.CurrTime
+            h = self.ProblemObj.TS.dt
+            tau  = export_every
+            test = ( t%tau <= h/2 or tau-t%tau < h/2)
+            return test
+
+    def export_iv_vtk(self):
+        phi0 =  self.ProblemObj.c_init
+        phi0.rename(self.name+'0','At t=0')
+        self.vtk_file << phi0
+
+    def export_step_vtk(self, **kwargs):
+        export_every = kwargs.get('export_every', None)
+        if self.test_export_every(export_every):
+            t = self.ProblemObj.TS.CurrTime
+            u = self.ProblemObj.CurrSolFull
+            u.rename(self.name,'')
+            self.vtk_file << (u.split()[0], t)
+
+    def export_step_npy(self, **kwargs):
+        export_every = kwargs.get('export_every', None)
+        field        = kwargs.get('field', self.ProblemObj.CurrSolFull.split()[0].vector()[:])
+        if self.test_export_every(export_every):
+            i = self.ProblemObj.TS.TimeStep
+            np.save(os.path.join(self.Folder,prefix+name + '_i={0:d}'.format(i)), field)
+
+    def export_npy(self, data, **kwargs):
+        np.save(os.path.join(self.Folder,self.FilePrefix + self.name + '.npy'))
+
+    def import_npy(self, **kwargs):
+        return np.load(os.path.join(self.Folder,self.FilePrefix + self.name + '.npy'))
+
+    def clear(self):
+        os.system('rm ' + self.Folder + '*' )
+
+
+
+
+
+#######################################################################################################
+#	Periodic boundary conditions
+#######################################################################################################
+
+class PeriodicBoundary(SubDomain):
+
+	def __init__(self, ndim):
+		SubDomain.__init__(self)
+		self.ndim = ndim
+
+	def inside(self, x, on_boundary):
+		return bool( 	any([ near(x[j], 0) for j in range(self.ndim) ]) and 
+					not any([ near(x[j], 1) for j in range(self.ndim) ]) and 
+						on_boundary
+					)
+
+	def map(self, x, y):
+		for j in range(self.ndim):
+			if near(x[j], 1):
+				y[j] = x[j] - 1
+			else:
+				y[j] = x[j]
+
+
+
+
+
+
+###########################################
+
