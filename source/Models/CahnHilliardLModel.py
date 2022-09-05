@@ -60,7 +60,6 @@ class InitialConditions(UserExpression):
         #####################################################
         values[0] =  0.4 + 1/50 * cos(2*pi*x[0]) * cos(2*pi*x[1]) # * cos(2*pi*x[2])
         values[1] = 0.0
-        values[2] = 0.0
         #####################################################
         ## Purely random IC (taken from the Marnvin's code ##
         #####################################################
@@ -68,7 +67,7 @@ class InitialConditions(UserExpression):
         # NOTE: By definition \mu_0 = \Psi'(\phi_0) - \varepsilon^2 \Delta \psi
         #values[1] = 0.0 
     def value_shape(self):
-        return (3,)
+        return (2,)
 
 class IC_TwoBubbles(UserExpression):
     def __init__(self, **kwargs):
@@ -83,10 +82,9 @@ class IC_TwoBubbles(UserExpression):
             r = sqrt( (x[0]-c[0])**2 + (x[1]-c[1])**2 )
             v += np.tanh((self.r-r)/(sqrt(2)*self.eps))
         values[0] = v
-        values[1] = 0.0 
-        values[2] = 0.0 
+        values[1] = 0
     def value_shape(self):
-        return (3,)
+        return (2,)
 
 class IC_FourBubbles(UserExpression):
     def __init__(self, **kwargs):
@@ -101,10 +99,9 @@ class IC_FourBubbles(UserExpression):
             r = sqrt( (x[0]-c[0])**2 + (x[1]-c[1])**2 )
             v += np.tanh((self.r-r)/(sqrt(2)*self.eps))
         values[0] = v
-        values[1] = 0.0 
-        values[2] = 0.0 
+        values[1] = 0
     def value_shape(self):
-        return(3,)
+        return (2,)
 
 class IC_BubbleSoup(UserExpression):
     def __init__(self, **kwargs):
@@ -130,9 +127,8 @@ class IC_BubbleSoup(UserExpression):
         # This is necessary if bubbles overlap
         values[0]  = max(-1,min(1,values[0])) 
         values[1] = 0.0 
-        values[2] = 0.0 
     def value_shape(self):
-        return(3,)
+        return (2,)
 
 class IC_RandomField(UserExpression):
     def __init__(self, **kwargs):
@@ -168,19 +164,20 @@ class IC_LinearCombination(UserExpression):
         v = values.copy()
         for i,IC in enumerate(self.ICs):
             IC.eval(v,x)
-            # import pdb; pdb.set_trace()    
             values += v*self.ICweights[i]
     def value_shape(self):
-        return(3,)
+        return (2,)
 ###########################################
 
 
-class CahnHilliardR(NonlinearProblem):
+class CahnHilliardL(NonlinearProblem):
 
     def __init__(self, **kwargs):
         NonlinearProblem.__init__(self)
         # Save config before it get's modified
         self.config = kwargs
+        # Add class name to config dictionary so that the output data can be easily distinguished
+        self.config['Name'] = self.__class__.__name__
 
         self.verbose = kwargs.get('verbose', False)
         set_log_active(self.verbose)
@@ -237,13 +234,6 @@ class CahnHilliardR(NonlinearProblem):
         else:
             self.M = _M
 
-        ### Derivative of mobility
-        _Md = eval(kwargs.get('Md', 'lambda x: -4*x*(1-x**2)'))
-        if not callable(_Md):
-            self.Md = lambda x: Constant(_Md)
-        else:
-            self.Md = _Md
-
         ### At the beginning the initial mass is unknown
         self.mass_init = float('nan')
 
@@ -268,64 +258,48 @@ class CahnHilliardR(NonlinearProblem):
             BC = PeriodicBoundary(ndim=self.ndim)
             P1 = FiniteElement("Lagrange", self.mesh.ufl_cell(), 1)
             self.V1 = FunctionSpace(self.mesh, P1, constrained_domain=BC)
-            # Note that the function space V1_vec will represent gradients of V1 hence the use of DG0 elements
-            # self.V1_vec = VectorFunctionSpace(self.mesh, "DG", 0, constrained_domain=BC)
             self.V2 = FunctionSpace(self.mesh, P1, constrained_domain=BC)
-            self.V3 = FunctionSpace(self.mesh, P1, constrained_domain=BC)
-            W = FunctionSpace(self.mesh, MixedElement([P1, P1, P1]), constrained_domain=BC)
+            W = FunctionSpace(self.mesh, MixedElement([P1, P1]), constrained_domain=BC)
             self.W = W
         else:
             ### Homogeneous Neumann BCs
             P1 = FiniteElement("Lagrange", self.mesh.ufl_cell(), 1)
-            W = FunctionSpace(self.mesh, MixedElement([P1, P1, P1]))
+            W = FunctionSpace(self.mesh, MixedElement([P1, P1]))
             self.W = W
             self.V1 = W.sub(0).collapse()
-            # Note that the function space V1_vec witll represent gradients of V1 hence the use of DG0 elements
-            # self.V1_vec = VectorFunctionSpace(self.mesh, "DG", 0)
             self.V2 = W.sub(1).collapse()
-            self.V3 = W.sub(2).collapse()
         self.v2d = vertex_to_dof_map(self.V1)
         self.dofmap1 = self.W.sub(0).dofmap()
         self.dofmap2 = self.W.sub(1).dofmap()
-        self.dofmap3 = self.W.sub(2).dofmap()
 
 
         # Define trial and test functions
-        du      = TrialFunction(W)
-        q, v, _ = TestFunctions(W)
+        du    = TrialFunction(W)
+        q, v  = TestFunctions(W)
 
         # Define functions
         u   = Function(W)  # current solution
         u0  = Function(W)  # solution from previous converged step
-        u1  = Function(W)  # solution from one step before previous converged step
-        # S   = Function(self.V1_vec)  # Function that holds the values of the gradient integral term
-        # S0  = Function(self.V1_vec)  # Function that holds the values of the previous gradient integral term
-        self.PrevSolFull = [u0, u1]
-        self.CurrSolFull = u
+        self.CurrSolFull, self.PrevSolFull = u, u0
 
         # Split mixed functions
-        dc, dmu, deta = split(du)
-        c,  mu, eta   = split(u)
-        c0, mu0, eta0 = split(u0)
-        # We only need concentration from two steps before
-        c1 = split(u1)[0];
-        self.PrevSol = [c0, c1]
-        self.CurrSol = c
+        dc, dmu = split(du)
+        c,  mu  = split(u)
+        c0, mu0 = split(u0)
+        self.CurrSol, self.PrevSol = c, c0
 
-        # Create initial conditions and interpolate
+        # Create intial conditions and interpolate
         IC = eval(kwargs.get('IC'))
         ICParameters = kwargs.get('ICParameters',{})
         if isinstance(IC, np.ndarray):
             u.vector()[self.dofmap1.dofs()]  = IC
             u0.vector()[self.dofmap1.dofs()] = IC
         else:            
-            u_init = IC(**(ICParameters | {'degree': 1}))
+            u_init = IC(**(ICParameters | {'degree':1}))
             u.interpolate(u_init)
             u0 = u.copy(deepcopy=True)
-            # u0.interpolate(u_init)
-        # self.c_init = u.split(True)[0].vector()[self.v2d]
         
-        self.c_init, self.mu_init, self.eta_init = u0.split(deepcopy=True)
+        self.c_init, self.mu_init = u0.split(deepcopy=True)
         # Solve auxiliary problem to determine m0, eta0 (eta0 part is untested)
         if kwargs.get('autotune_mu0',False):
             u_V2 = Function(self.V1)
@@ -344,7 +318,7 @@ class CahnHilliardR(NonlinearProblem):
             self.mu_init.assign(mu_V2)
             if self.verbose:
                 print(f'Residue of calculated initial condition for mu is {m0_res}')
-            self.eta_init.vector()[:] = 0
+
 
         ###-----------------------------------
         ### Weak statement of the equations
@@ -356,8 +330,6 @@ class CahnHilliardR(NonlinearProblem):
         phi1 = self.phi1
         phi2 = self.phi2
         M    = self.M
-        Md   = self.Md
-        dt   = self.dt
         if self.fg_LinearSolve:
             ###----------------------------
             ### Linear case assembly
@@ -365,49 +337,43 @@ class CahnHilliardR(NonlinearProblem):
 
             self.set_LinSolver(**kwargs)
 
-            v1, v2, v3  = TrialFunctions(W)
-            w1, w2, w3  = TestFunctions(W)
+            v1, v2  = TrialFunction(W)
+            w1, w2  = TestFunctions(W)
 
-            #Assemble the S_n that contains the gradient integral     
-            #https://fenicsproject.org/qa/12634/gradient-of-a-cg-order-one-element/
-            self.S0 = Vector(u0.vector())
-            self.S0.zero()                                        # S0 is zero at the beginning
-            import pdb; pdb.set_trace()    
-            self._S = dot(Md(c0)*(c0-c1)*grad(eta),grad(w1))*dx
+            K = v1*w1*dx + v2*w2*dx + (b1+b2)*dot(M(c0)*grad(v2), grad(w1))*dx - 2*v1*w2*dx - lmbda * dot(grad(v1), grad(w2))*dx 
+            self.StiffnessMatrix = assemble(K)
+            self._RHS = phi2(c0)*w2*dx
 
-            K = v1*w1*dx + dot(M(c0)*grad(v3),grad(w1))*dx - dot(Md(c0)*(c0-c1)*grad(v3),grad(w1))*dx\
-              + v2*w2*dx - eval(sphi1.replace('x','v1'))*w2*dx - lmbda * dot(grad(v1), grad(w2))*dx \
-              + v3*w3*dx - (b1+b2)*v2*w3*dx  
-            self.StiffnessMatrix = assemble(K) 
-            self._RHS = self.c_init*w1*dx + phi2(c0)*w2*dx 
 
             ### Initialize history term and modes (in numpy vector terms)
             v1m, w1m = TrialFunction(self.V1), TestFunction(self.V1)
             v2m, w2m = TrialFunction(self.V2), TestFunction(self.V2)
-            v3m, w3m = TrialFunction(self.V3), TestFunction(self.V3)
 
-            self.Modes      = np.zeros([len(self.dofmap3.dofs()), self.TS.nModes+1])
+            self.Modes      = np.zeros([len(self.dofmap1.dofs()), self.TS.nModes+1])
+            self.Modes[:,0] = assemble(c*w1m*dx).get_local()    
             self.History    = self.Modes @ self.TS.gamma_k
 
-            # Solve the suplementary equations from the system for Modes
-            self.Modes_EqS_Matrix    = assemble(v2m*w2m*dx)
+            self.DiffusionMatrix  = assemble(dot(M(c0)*grad(v1m),grad(w1m))*dx)
+            self.MassMatrix2      = assemble(v2m*w2m*dx)
             if   self.TS.Scheme[3:] == 'mIE':
-                self.Modes_EqS_LF  = (phi1(c) + phi2(c0))*w2m*dx + lmbda * dot(grad(c), grad(w2m))*dx
+                self._Mmu  = (phi1(c) + phi2(c0))*w2m*dx + lmbda * dot(grad(c), grad(w2m))*dx
             elif self.TS.Scheme[3:] == 'mCN':
-                self.Modes_EqS_LF  = (phi1(c) + phi2(c))*w2m*dx + lmbda * dot(grad(c), grad(w2m))*dx
+                self._Mmu  = (phi1(c) + phi2(c))*w2m*dx + lmbda * dot(grad(c), grad(w2m))*dx
             else:
-                raise Exception('Unknown scheme! Please set "scheme" parameter in the format "RA:mIE" or "RA:mCN".')
+                raise Exception('Unknown scheme!')
             self.mu    = Function(self.V2)
             self.mu0   = Function(self.V2)
             self.mu.vector()[:]  = 0
             self.mu0.vector()[:] = 0
             self.mu0.vector().set_local(self.mu.vector()[:])
-            Modes_EqS_RHS= assemble(self.Modes_EqS_LF)
-            self.Modes_LinSolver.solve(self.Modes_EqS_Matrix, self.mu.vector(), Modes_EqS_RHS)
-            # self._CurrFlux = dot(M(c0)*grad(mu), grad(w1m))*dx
-            # self._PrevFlux = dot(M(c0)*grad(mu0), grad(w1m))*dx
-            self.Modes_Eq_muMatrix = assemble(v2m*w3m*dx)
+            Mmu = assemble(self._Mmu)
+            self.LinSolver2.solve(self.MassMatrix2, self.mu.vector(), Mmu)
+            self._CurrFlux = dot(M(c0)*grad(mu), grad(w1m))*dx
+            self._PrevFlux = dot(M(c0)*grad(mu0), grad(w1m))*dx
+            F = dot(M(c0)*grad(v2m), grad(w1m))*dx
+            self.FluxMatrix = assemble(F)
             self._FluxNorm  = dot(M(c0)*grad(self.mu), grad(self.mu))*dx
+
 
         else:
             ###----------------------------
@@ -416,7 +382,43 @@ class CahnHilliardR(NonlinearProblem):
 
             ### Solver
             self.set_Solver(**kwargs)
-            raise Exception('Nonlinear solution scheme is not implemented!')
+
+            ### Potential term
+            P = phi1(c)*v*dx + phi2(c0)*v*dx  + lmbda * dot(grad(c), grad(v))*dx
+            # P = phi1(c)*v*dx + phi2(c)*v*dx  + lmbda * dot(grad(c), grad(v))*dx
+
+
+            self._CurrFlux = dot(grad(M(c)*mu ), grad(q))*dx
+            self._PrevFlux = dot(grad(M(c0)*mu0), grad(q))*dx
+
+            b1, b2 = self.TS.beta1, self.TS.beta2
+            Eq1 = c*q*dx + (b1+b2)*self._CurrFlux #+ b2*self._PrevFlux ### c0 goes to History term
+            # b = self.TS.beta
+            # Eq1 = c*q*dx + b*self._CurrFlux
+            Eq2 = mu*v*dx - P
+            self._Residual = Eq1 + Eq2  ### without history term
+
+            # Compute directional derivative about u in the direction of du (Jacobian)
+            self.Jacobian = derivative(self._Residual, u, du)
+
+            ### Init history term and modes (in numpy vector terms)
+            self.Modes      = np.zeros([u.vector().get_local().size, self.TS.nModes+1])
+            self.Modes[:,0] = assemble(c*q*dx).get_local()        
+            self.History    = self.Modes @ self.TS.gamma_k
+
+            mu, v = TrialFunction(self.V2), TestFunction(self.V2)
+            self._ModalRHS  = (phi1(c) + phi2(c))*v*dx + lmbda * dot(grad(c), grad(v))*dx
+            self.MassMatrixMu = assemble(mu*v*dx)
+            # self.LinSolverMu.set_operator(self.MassMatrixMu)
+            self.mu = Function(self.V2)
+
+            v1m, v2m  = TrialFunction(W)
+            w1m, w2m  = TestFunctions(W)
+
+            #NOTE! Something strange is going on here. Is this only needed to calculate HistoryEnergy?
+            self.DiffusionMatrix = assemble(dot(M(c)*grad(v1m),grad(w1m))*dx + dot(M(c)*grad(v2m),grad(w2m))*dx)
+            self._FluxNorm = dot(M(c)*grad(mu), grad(mu))*dx
+
         ###----------------------------------------------------------
         
         ### Other quantities
@@ -441,31 +443,42 @@ class CahnHilliardR(NonlinearProblem):
     def J(self, A, x):
         assemble(self.Jacobian, tensor=A)
 
-    def update_history_and_s(self):
-        if self.scheme[:2] == 'RA': 
+    def update_history(self):
+        if self.scheme == 'L1':
+            alpha = self.alpha        
+            j  = len(self.TS.b)
+            bj = ((j+1)**(1-alpha) - j**(1-alpha)) / gamma(2-alpha)
+            self.TS.b = np.append(self.TS.b, bj)
+            coefs = np.append(-np.diff(self.TS.b)/self.TS.b[0], self.TS.b[-1]/self.TS.b[0])[::-1]
+
+            HistSolNew      = self.Model.multMass(self.CurrSol).copy(True) 
+            self.HistSol    = np.hstack([ self.HistSol,  HistSolNew.reshape([-1,1])])
+            self.History[:] = self.HistSol @ coefs
+
+            self.PrevSol[:] = self.CurrSol[:]
+            self.CurrF[:]   = self.Model.update_NonLinearPart(self.CurrSol, time=self.CurrTime)
+            self.PrevF[:]   = self.CurrF[:]
+        else: ### RA scheme
             if self.fg_LinearSolve:
-                # Calculate current value of S and save it as a previous for the next step
-                self.S0 += assemble(self._S) 
-                # In the case of parallel runtime the next code operatos on the locally-owned 
-                # part of solution
-                mu0 = self.mu.vector().get_local();
-                Modes_EqS_RHS = assemble(self.Modes_EqS_LF)
-                self.Modes_LinSolver.solve(self.Modes_EqS_Matrix, self.mu.vector(), Modes_EqS_RHS)
-                mu = self.mu.vector().get_local();
+                c = self.CurrSolFull.split(True)[0].vector()
+                c0= self.PrevSolFull.split(True)[0].vector()
+                self.mu0.vector().set_local(self.mu.vector().get_local())
+                Mmu = assemble(self._Mmu)
+                self.LinSolver2.solve(self.MassMatrix2, self.mu.vector(), Mmu)
+                Flux1 = ( self.FluxMatrix*self.mu.vector()).get_local()
+                Flux2 = ( self.FluxMatrix*self.mu0.vector()).get_local()
                 g_k, b1_k, b2_k = self.TS.gamma_k, self.TS.beta1_k, self.TS.beta2_k
-                self.Modes[:]   = g_k*self.Modes - b1_k*np.reshape(self.Modes_Eq_muMatrix*mu,(-1,1)) + b2_k*np.reshape(self.Modes_Eq_muMatrix*mu0,(-1,1))
+                self.Modes[:]   = g_k*self.Modes - (b1_k*Flux1[:,None] + b2_k*Flux2[:,None])
                 self.History[:] = self.Modes @ g_k
-                self.mu0.vector().set_local(mu0)
-                # Make sure that MPI vector is assembled properly
-                # Only needed (presumably) for parallel runtime 
-                self.mu0.vector().apply("insert")                    
             else:
-                raise Exception('Nonlinear solution scheme is not implemented!')
-        else:
-            raise Exception('Unknown time-stepping scheme. Please use RA:XXX or L1:XXX, with XXX being "mIE", "mCN"')
+                F1 = assemble(self._CurrFlux).get_local()
+                F0 = assemble(self._PrevFlux).get_local()
+                g_k, b1_k, b2_k = self.TS.gamma_k, self.TS.beta1_k, self.TS.beta2_k
+                self.Modes[:]   = g_k*self.Modes - (b1_k*F1[:,None] + b2_k*F0[:,None])
+                self.History[:] = self.Modes @ g_k
 
     def __call__(self):
-        u, u0, u1 = self.CurrSolFull, self.PrevSolFull[0], self.PrevSolFull[1]
+        u, u0 = self.CurrSolFull, self.PrevSolFull
 
         ### yield initial solution
         self.TS.restart()
@@ -476,24 +489,17 @@ class CahnHilliardR(NonlinearProblem):
         # Step in time
         if self.fg_LinearSolve:
             while self.TS.inc():    
-                # Shift the solution values one step back in time
-                u1.vector().set_local(u0.vector().get_local())
                 u0.vector().set_local(u.vector().get_local())
-                # Update RHS of the system 
-                RHS = assemble(self._RHS) + self.S0
-                RHS[self.dofmap3.dofs()] += self.History
-                # Solve
+                RHS = assemble(self._RHS) 
+                RHS[self.dofmap1.dofs()] += self.History
                 self.LinSolver.solve(self.StiffnessMatrix, u.vector(), RHS)
-                # Update history, modes and the cumulative itegral S0
-                self.update_history_and_s()
+                self.update_history()
                 yield u.split(True)[0].vector()[:]
         else:
             while self.TS.inc():    
-                # Shift the solution values one step back in time
-                u1.vector().set_local(u0.vector().get_local())
                 u0.vector().set_local(u.vector().get_local())
                 self.Solver.solve(self, u.vector())
-                self.update_history_and_s()
+                self.update_history()
                 yield u.split(True)[0].vector()[:]
     
     ### Solution iterator (time-integration)
@@ -539,13 +545,13 @@ class CahnHilliardR(NonlinearProblem):
         self.Solver.parameters["linear_solver"] = "lu"
         #self.Solver.parameters["linear_solver"] = "tfqm"
         #self.Solver.parameters["linear_solver"] = "richardson"
-        # self.Solver.parameters["linear_solver"] = "bicgstab"
+        #self.Solver.parameters["linear_solver"] = "bicgstab"
         #self.Solver.parameters["linear_solver"] = "cg"
         #self.Solver.parameters["linear_solver"] = "gmres"
         #self.Solver.parameters["linear_solver"] = "umfpack"
         #self.Solver.parameters["linear_solver"] = "mumps"
-        # self.Solver.parameters["preconditioner"] = "default"
-        self.Solver.parameters["preconditioner"] = "ilu"
+        self.Solver.parameters["preconditioner"] = "default"
+        #self.Solver.parameters["preconditioner"] = "ilu"
         #self.Solver.parameters["preconditioner"] = "hypre_euclid"
         #self.Solver.parameters["preconditioner"] = "sor"
         #self.Solver.parameters["preconditioner"] = "icc"
@@ -609,16 +615,15 @@ class CahnHilliardR(NonlinearProblem):
         # self.LinSolverMu.parameters["monitor_convergence"] = False
 
 
-        self.Modes_LinSolver = PETScLUSolver("mumps")
-        # self.Modes_LinSolver = PETScKrylovSolver("cg", "icc")
-        # self.Modes_LinSolver.parameters["relative_tolerance"] = 1.e-12
-        # self.Modes_LinSolver.parameters["absolute_tolerance"] = 1.e-12
-        # self.Modes_LinSolver.parameters["nonzero_initial_guess"] = True
+        self.LinSolver2 = PETScLUSolver("mumps")
+        # self.LinSolver2 = PETScKrylovSolver("cg", "icc")
+        # self.LinSolver2.parameters["relative_tolerance"] = 1.e-12
+        # self.LinSolver2.parameters["absolute_tolerance"] = 1.e-12
+        # self.LinSolver2.parameters["nonzero_initial_guess"] = True
 
 
 
-        self.LinSolverD = PETScKrylovSolver("gmres", "petsc_amg")
-        # self.LinSolverD = PETScKrylovSolver("cg", "icc")
+        self.LinSolverD = PETScKrylovSolver("cg", "icc")
 
 
 
@@ -630,17 +635,53 @@ class CahnHilliardR(NonlinearProblem):
     def Energy(self):
         return assemble(self._Energy, **self._fenics_assembly_pars )
 
+    @property
+    def HistoryEnergy(self):
+        if self.fg_LinearSolve:
+            d, c, c_inf = self.TS.RA.d, self.TS.RA.c, self.TS.RA.c_inf
+            g_k, b1_k, b2_k = self.TS.gamma_k, self.TS.beta1_k, self.TS.beta2_k
+            w = d/c #(1-g_k)/(b1_k) #d/c
+            f   = Function(self.V1)
+            v   = f.vector()
+            Muk = Vector(v)
+            mu  = self.CurrSolFull.split(True)[1].vector()
+            HistoryEnergy = 0
+            for k in range(self.TS.nModes):
+                Muk.set_local(self.Modes[:,k+1])
+                self.LinSolverD.solve(self.FluxMatrix, v, Muk)
+                # HistoryEnergy += d[k]/c[k] * 0.5*assemble(dot(grad(f),grad(f))*dx)
+                # HistoryEnergy += d[k]/c[k] * 0.5* v.inner(self.FluxMatrix*v)
+                HistoryEnergy += w[k] * 0.5* v.inner(Muk)
+            # HistoryEnergy += 0.5*c_inf*assemble(self._FluxNorm)
+            HistoryEnergy += 0.5*c_inf* mu.inner(self.FluxMatrix*mu)
+            return HistoryEnergy
+        else:
+            d, c, c_inf = self.TS.RA.d, self.TS.RA.c, self.TS.RA.c_inf
+            D   = self.DiffusionMatrix
+            f   = Function(self.W)
+            v   = f.vector()
+            Muk = Vector(v)
+            mu = self.CurrSolFull.sub(1)
+            FluxNorm = assemble(dot(grad(mu),grad(mu))*dx)
+            HistoryEnergy = 0
+            for k in range(self.TS.nModes):
+                Muk.set_local(self.Modes[:,k+1])
+                # Muk[:] = self.Modes[:,k+1]
+                solve(D, v, Muk)
+                HistoryEnergy += d[k]/c[k] * 0.5*assemble(dot(grad(f.sub(0)),grad(f.sub(0)))*dx, **self._fenics_assembly_pars )
+            # HistoryEnergy += 0.5*c_inf*assemble(self._FluxNorm)
+            HistoryEnergy += 0.5*c_inf*FluxNorm
+            return HistoryEnergy
 
     @property
     def Residual(self):
-        # u = self.CurrSolFull.sub(0)
-        # mu = self.CurrSolFull.sub(1)
-        # lmbda = Constant(self.eps**2)
-        # b1, b2  = self.TS.beta1, self.TS.beta2
-
-        # P = self.phi1(u)*mu*dx + self.phi2(u)*mu*dx  + lmbda * dot(grad(u), grad(mu))*dx
-        # Eq1 = u*u*dx + (b1+b2)*dot(grad(self.M(u)*mu ), grad(u))*dx
-        # Eq2 = mu*mu*dx - P
+        u = self.CurrSolFull.sub(0)
+        mu = self.CurrSolFull.sub(1)
+        lmbda = Constant(self.eps**2)
+        b1, b2  = self.TS.beta1, self.TS.beta2
+        P = self.phi1(u)*mu*dx + self.phi2(u)*mu*dx  + lmbda * dot(grad(u), grad(mu))*dx
+        Eq1 = u*u*dx + (b1+b2)*dot(grad(self.M(u)*mu ), grad(u))*dx
+        Eq2 = mu*mu*dx - P
         return assemble(Eq1+Eq2, **self._fenics_assembly_pars )
         # return assemble(self._Residual, **self._fenics_assembly_pars )
         # return self.CurrSolFull.split(True)[0].vector()[:]-self.mass_init)
