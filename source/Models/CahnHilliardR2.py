@@ -204,11 +204,19 @@ class CahnHilliardR2(NonlinearProblem):
             #https://fenicsproject.org/qa/12634/gradient-of-a-cg-order-one-element/
             self.S0 = Vector(u0.vector())
             self.S0.zero()                                        # S0 is zero at the beginning
-            self._S = dot(Md(c)*(c-c0)*grad(eta),grad(w1))*dx
 
-            K = v1*w1*dx + dot(M(c0)*grad(v3),grad(w1))*dx - dot(Md(c0)*(c0-c1)*grad(v3),grad(w1))*dx\
+            ### Versions a), b)
+            # self._S = dot(Md(c)*(c-c0)*grad(eta),grad(w1))*dx
+            # K = v1*w1*dx + dot(M(c0)*grad(v3),grad(w1))*dx - dot(Md(c0)*(c0-c1)*grad(v3),grad(w1))*dx\
+              # + v2*w2*dx - eval(sphi1.replace('x','v1'))*w2*dx - lmbda * dot(grad(v1), grad(w2))*dx \
+              # + v3*w3*dx - (b1+b2)*v2*w3*dx  
+
+            ### Versions c), d)
+            self._S = dot((M(c)-M(c0))*grad(eta),grad(w1))*dx
+            K = v1*w1*dx + dot(M(c0)*grad(v3),grad(w1))*dx - dot((M(c0)-M(c1))*grad(v3),grad(w1))*dx\
               + v2*w2*dx - eval(sphi1.replace('x','v1'))*w2*dx - lmbda * dot(grad(v1), grad(w2))*dx \
               + v3*w3*dx - (b1+b2)*v2*w3*dx  
+
             self.StiffnessMatrix = assemble(K) 
             self._RHS = self.c_init*w1*dx + phi2(c0)*w2*dx 
 
@@ -221,22 +229,51 @@ class CahnHilliardR2(NonlinearProblem):
             self.History    = self.Modes @ self.TS.gamma_k
 
             # Solve the suplementary equations from the system for Modes
+
+            # ### Version a)
+            # self.Modes_EqS_Matrix    = assemble(v1m*w1m*dx + v2m*w2m*dx - lmbda * dot(grad(v1m), grad(w2m))*dx)
+            # if   self.TS.Scheme[3:] == 'mIE':
+                # self.Modes_EqS_LF  = self.c_init*w1m*dx - dot(M(c0)*grad(eta),grad(w1m))*dx + dot(Md(c0)*(c0-c1)*grad(eta),grad(w1m))*dx \
+                                   # + (phi1(c) + phi2(c0))*w2m*dx 
+            # elif self.TS.Scheme[3:] == 'mCN':
+                # self.Modes_EqS_LF  = self.c_init*w1m*dx - dot(M(c)*grad(eta),grad(w1m))*dx + dot(Md(c)*(c-c0)*grad(eta),grad(w1m))*dx \
+                                   # + (phi1(c) + phi2(c))*w2m*dx 
+            # self.Modes_EqS_Matrix    = assemble(v1m*w1m*dx + v2m*w2m*dx - lmbda * dot(grad(v1m), grad(w2m))*dx)
+            # ### Version b)
+            # self.Modes_EqS_Matrix    = assemble(v1m*w1m*dx +\
+                    # v2m*w2m*dx - eval(sphi1.replace('x','v1m'))*w2m*dx - lmbda * dot(grad(v1m), grad(w2m))*dx)
+            # if   self.TS.Scheme[3:] == 'mIE':
+                # self.Modes_EqS_LF  = self.c_init*w1m*dx - dot(M(c0)*grad(eta),grad(w1m))*dx + dot(Md(c0)*(c-c0)*grad(eta),grad(w1m))*dx \
+                                   # + (phi2(c0))*w2m*dx 
+            # elif self.TS.Scheme[3:] == 'mCN':
+                # self.Modes_EqS_LF  = self.c_init*w1m*dx - dot(M(c)*grad(eta),grad(w1m))*dx + dot(Md(c)*(c-c0)*grad(eta),grad(w1m))*dx \
+                                   # + (phi2(c))*w2m*dx 
+            ### Version c)
             self.Modes_EqS_Matrix    = assemble(v1m*w1m*dx + v2m*w2m*dx - lmbda * dot(grad(v1m), grad(w2m))*dx)
             if   self.TS.Scheme[3:] == 'mIE':
-                self.Modes_EqS_LF  = - dot(M(c0)*grad(eta),grad(w1m))*dx + dot(Md(c0)*(c-c0)*grad(eta),grad(w1m))*dx \
-                                   + (phi1(c) + phi2(c0))*w2m*dx 
+                self.Modes_EqS_LF  = self.c_init*w1m*dx - dot(M(c0)*grad(eta),grad(w1m))*dx \
+                        + dot((M(c)-M(c0))*grad(eta),grad(w1m))*dx + (phi1(c) + phi2(c0))*w2m*dx 
             elif self.TS.Scheme[3:] == 'mCN':
-                self.Modes_EqS_LF  = - dot(M(c)*grad(eta),grad(w1m))*dx + dot(Md(c)*(c-c0)*grad(eta),grad(w1m))*dx \
-                                   + (phi1(c) + phi2(c))*w2m*dx 
+                self.Modes_EqS_LF  = self.c_init*w1m*dx - dot(M(c)*grad(eta),grad(w1m))*dx \
+                        + dot((M(c)-M(c0))*grad(eta),grad(w1m))*dx + (phi1(c) + phi2(c))*w2m*dx 
             else:
                 raise Exception('Unknown scheme! Please set "scheme" parameter in the format "RA:mIE" or "RA:mCN".')
+            # ### Version d)
+            # self.Modes_EqS_Matrix    = assemble(v1m*w1m*dx +\
+                    # v2m*w2m*dx - eval(sphi1.replace('x','v1m'))*w2m*dx - lmbda * dot(grad(v1m), grad(w2m))*dx)
+            # if   self.TS.Scheme[3:] == 'mIE':
+                # self.Modes_EqS_LF  = self.c_init*w1m*dx - dot(M(c0)*grad(eta),grad(w1m))*dx \
+                        # + dot((M(c)-M(c0))*grad(eta),grad(w1m))*dx + (phi2(c0))*w2m*dx 
+            # elif self.TS.Scheme[3:] == 'mCN':
+                # self.Modes_EqS_LF  = self.c_init*w1m*dx - dot(M(c)*grad(eta),grad(w1m))*dx \
+                        # + dot((M(c)-M(c0))*grad(eta),grad(w1m))*dx + (phi2(c))*w2m*dx 
             # Function that keeps the solution of 2 supplementary mode equations
             # (this function is only used temporarily)
             self.cmu = Function(self.V12)
+            # self.cmu.vector().zero()
             # self.cmu.vector()[:] = 0
             #self.cmu0.vector().set_local(self.phimu.vector()[:])
-            self.cmu.vector().zero()
-            Modes_EqS_RHS = assemble(self.Modes_EqS_LF)
+            # Modes_EqS_RHS = assemble(self.Modes_EqS_LF)
             # self.Modes_LinSolver.solve(self.Modes_EqS_Matrix, self.cmu.vector(), Modes_EqS_RHS)
             # Assign the newly calculated solution parts to u
             # u.sub(0).vector().set_local(self.cmu.sub(0).vector().get_local())
@@ -293,7 +330,7 @@ class CahnHilliardR2(NonlinearProblem):
                 self.CurrSolFull.vector().apply("insert")                    
                 mu = self.CurrSolFull.split(True)[1].vector().get_local();
                 mu0 = self.PrevSolFull[0].split(True)[1].vector().get_local();
-                import pdb; pdb.set_trace()    
+                # import pdb; pdb.set_trace()    
                 g_k, b1_k, b2_k = self.TS.gamma_k, self.TS.beta1_k, self.TS.beta2_k
                 self.Modes[:]   = g_k*self.Modes + b1_k*np.reshape(self.Modes_Eq_muMatrix*mu,(-1,1)) + b2_k*np.reshape(self.Modes_Eq_muMatrix*mu0,(-1,1))
                 self.History[:] = self.Modes @ g_k
@@ -301,7 +338,9 @@ class CahnHilliardR2(NonlinearProblem):
                 # Only needed (presumably) for parallel runtime 
                 # self.PrevSolFull[0].vector().apply("insert")                    
                 # Calculate current value of S and save it as a previous for the next step
+                # import pdb; pdb.set_trace()    
                 self.S0 += assemble(self._S) 
+                if self.verbose: print(f"Norms:\n u:%0.5e, u0:%0.5e, u1:%0.5e, S0:%0.5e." %(self.CurrSolFull.vector().norm('l2'), self.PrevSolFull[0].vector().norm('l2'),self.PrevSolFull[1].vector().norm('l2'), self.S0.norm('l2')))
             else:
                 raise Exception('Nonlinear solution scheme is not implemented!')
         else:
@@ -328,6 +367,7 @@ class CahnHilliardR2(NonlinearProblem):
                 # Solve
                 self.LinSolver.solve(self.StiffnessMatrix, u.vector(), RHS)
                 # Update history, modes and the cumulative itegral S0
+                # import pdb; pdb.set_trace()    
                 self.update_history_and_s()
                 yield u.split(True)[0].vector()[:]
         else:
