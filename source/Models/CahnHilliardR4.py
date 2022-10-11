@@ -1,25 +1,7 @@
-# import random
 import numpy as np
-import random
 from dolfin import *
-from tqdm import tqdm
-from copy import copy
-from scipy.special import gamma
-import sys, os
-
 from source.TimeStepper import FracTS_RA, FracTS_L1
-
-
-###########################################
-# Change log levele for FEniCS
-
-import logging
-ffc_logger = logging.getLogger('FFC')
-print('Change FFC log level to Warning')
-print('Log level was:', logging.getLevelName(ffc_logger.getEffectiveLevel()))
-ffc_logger.setLevel(logging.WARNING)
-print('Log level is now:', logging.getLevelName(ffc_logger.getEffectiveLevel()))
-###########################################
+from .CahnHilliardRUtils import Exporter
 
 ###########################################
 # Form compiler options
@@ -28,63 +10,6 @@ print('Log level is now:', logging.getLevelName(ffc_logger.getEffectiveLevel()))
 parameters["form_compiler"]["optimize"]     = True
 parameters["form_compiler"]["cpp_optimize"] = True
 parameters["form_compiler"]["cpp_optimize_flags"] = "-O3 -ffast-math -march=native"
-
-###########################################
-
-# Class representing the intial conditions
-class InitialConditions(UserExpression):
-    def __init__(self, **kwargs):
-        # random.seed(2 + MPI.rank(MPI.comm_world))
-        np.random.seed(0)
-        self.nModes = 10
-        self.corrlen = 0.2
-        self.k0 = np.arange(self.nModes)
-        self.k1 = np.arange(self.nModes)
-        self.coefs  = np.random.normal(loc=0, scale=1/self.nModes**2, size=(self.nModes,self.nModes)) #* np.exp(-self.k0**2/(2*self.corrlen**2)) + self.k1**2))
-        self.G0 = np.exp(-self.k0**2 * self.corrlen**2/2)
-        self.G1 = np.exp(-self.k1**2 * self.corrlen**2/2)
-        super().__init__(**kwargs)
-    def eval(self, values, x):
-        # ptb = 1/100
-        # for i in range(len(x)):
-        #     ptb *= cos(2 * pi * x[i])
-        # values[0] =  1/50*(cos(2*pi*x[1])  + cos(2*pi*x[0])) #0.02*(0.5 - np.random.random())
-        # values[0] = np.random.normal(loc=0.4, scale=0.01)
-        # values[0] = 0.4 + 0.2*(0.5 - np.random.random())
-        # values[0] = np.random.random()
-        # values[0] =  0.4+1/50*(cos(1/4*pi*x[1])  + cos(4*pi*x[0]))
-        # values[0] = np.random.normal(loc=0.5, scale=0.001)
-        # values[0] = (np.cos(pi*self.k0*x[0])*self.G0) @ self.coefs @ (np.cos(pi*self.k1*x[1])*self.G1)
-        #####################################################
-        # IC enabled by default in Ustim's code
-        #####################################################
-        values[0] =  0.4 + 1/50 * cos(2*pi*x[0]) * cos(2*pi*x[1]) # * cos(2*pi*x[2])
-        values[1] = 0.0
-        #####################################################
-        ## Purely random IC (taken from the Marnvin's code ##
-        #####################################################
-        #values[0] = 0.002*(0.5 - random.random()) #ICSmooth(x, 0.2501)
-        # NOTE: By definition \mu_0 = \Psi'(\phi_0) - \varepsilon^2 \Delta \psi
-        #values[1] = 0.0 
-    def value_shape(self):
-        return (2,)
-
-class IC_TwoBubbles(UserExpression):
-    def __init__(self, **kwargs):
-        self.c = [ (0.5-0.2, 0.5), (0.5+0.2, 0.5) ]
-        # self.c = [ (0.5-0.2, 0.5-0.2), (0.5+0.2, 0.5-0.2), (0.5+0.2, 0.5+0.2), (0.5-0.2, 0.5+0.2) ]
-        self.r = 0.15
-        self.eps = kwargs.pop('eps', 0.03)
-        super().__init__(**kwargs)
-    def eval(self, values, x):
-        v = len(self.c)-1
-        for c in self.c:
-            r = sqrt( (x[0]-c[0])**2 + (x[1]-c[1])**2 )
-            v += np.tanh((self.r-r)/(sqrt(2)*self.eps))
-        values[0] = v
-        values[1] = 0
-    def value_shape(self):
-        return (2,)
 
 class IC_FourBubbles(UserExpression):
     def __init__(self, **kwargs):
@@ -99,78 +24,11 @@ class IC_FourBubbles(UserExpression):
             r = sqrt( (x[0]-c[0])**2 + (x[1]-c[1])**2 )
             v += np.tanh((self.r-r)/(sqrt(2)*self.eps))
         values[0] = v
-        values[1] = 0
+        values[1] = 0.0;
     def value_shape(self):
-        return (2,)
+        return(2,)
 
-class IC_BubbleSoup(UserExpression):
-    def __init__(self, **kwargs):
-        seed = kwargs.pop('seed',0)
-        np.random.seed(seed)
-        n  = kwargs.pop('n', 3)
-        self.eps = kwargs.pop('eps', 0.03)
-        R  = min(0.5, max(0.02,kwargs.pop('R', 0.2)))
-        r  = max(0.02, kwargs.pop('r', 0.04))
-        R = max(R,r); 
-        r = min(R,r)
-        # Generate rundom bubbles
-        self.bR = r + np.random.rand(n)*(R-r)
-        self.bC = np.random.rand(2, n)*(np.ones((2,n)) - 2*self.bR)+self.bR;
-        self.bn = n;
-        super().__init__(**kwargs)
-    def eval(self, values, x):
-        vr = self.bC - np.tile([[x[0]],[x[1]]],(1,self.bn))
-        r = np.linalg.norm(vr,axis=0,ord=2)
-        # The values is assumed to be between -1 and 1 so one has to divide by the number of bubbles
-        values[0]  = sum(np.tanh((self.bR-r)/(sqrt(2)*self.eps)))+self.bn-1
-        # Make sure that values is within [-1,1]
-        # This is necessary if bubbles overlap
-        values[0]  = max(-1,min(1,values[0])) 
-        values[1] = 0.0 
-    def value_shape(self):
-        return (2,)
-
-class IC_RandomField(UserExpression):
-    def __init__(self, **kwargs):
-        seed = kwargs.pop('seed', 0)
-        self.eps  = kwargs.pop('eps', 0.002)
-        self.c    = kwargs.pop('center', 0.5)
-        np.random.seed(seed)
-        super().__init__(**kwargs)
-    def eval(self, values, x):
-        values[0] = self.eps*(self.c - random.random()) #ICSmooth(x, 0.2501)
-        values[1] = 0.0 
-        values[2] = 0.0 
-    def value_shape(self):
-        return(3,)
-
-class IC_LinearCombination(UserExpression):
-    def __init__(self, **kwargs):
-        IC_Names = ('IC_TwoBubbles', 'IC_FourBubbles', 'IC_BubbleSoup', 'IC_RandomField')
-        n  = kwargs.pop('n', 1)
-        self.ICs = []
-        w = np.array(kwargs.pop('IC_weights', (1)))
-        self.ICweights = w/w.sum()
-        for i in range(1,n+1):
-            _IC = kwargs.pop(f'IC{i}', '')
-            if _IC in IC_Names:
-                _IC_Pars = kwargs.pop(f'IC{i}_Parameters', '')
-                self.ICs.append(eval(_IC+'(**' + str(_IC_Pars) + ')'))
-            else:
-                raise Exception(f'IC {_IC} is unknows. Use one of {IC_Names}')
-        super().__init__(**kwargs)
-    def eval(self, values, x):
-        values[0] = 0; values[1] = 0; values[2] = 0
-        v = values.copy()
-        for i,IC in enumerate(self.ICs):
-            IC.eval(v,x)
-            values += v*self.ICweights[i]
-    def value_shape(self):
-        return (2,)
-###########################################
-
-
-class CahnHilliardL(NonlinearProblem):
+class CahnHilliardR4(NonlinearProblem):
 
     def __init__(self, **kwargs):
         NonlinearProblem.__init__(self)
@@ -187,6 +45,8 @@ class CahnHilliardL(NonlinearProblem):
         self.ndim = kwargs.get('ndim', 2)
         
         ### Time-stepper
+        # The numerical scheme implemented here operates on I^{1 - alpha}
+        kwargs['alpha'] = 1 - kwargs['alpha']
         self.TS = self.set_TimeStepper(**kwargs)
         b1, b2  = self.TS.beta1, self.TS.beta2
 
@@ -234,6 +94,13 @@ class CahnHilliardL(NonlinearProblem):
         else:
             self.M = _M
 
+        ### Derivative of mobility
+        _Md = eval(kwargs.get('Md', 'lambda x: -4*x*(1-x**2)'))
+        if not callable(_Md):
+            self.Md = lambda x: Constant(_Md)
+        else:
+            self.Md = _Md
+
         ### At the beginning the initial mass is unknown
         self.mass_init = float('nan')
 
@@ -267,6 +134,8 @@ class CahnHilliardL(NonlinearProblem):
             W = FunctionSpace(self.mesh, MixedElement([P1, P1]))
             self.W = W
             self.V1 = W.sub(0).collapse()
+            # Note that the function space V1_vec will represent gradients of V1 hence the use of DG0 elements
+            # self.V1_vec = VectorFunctionSpace(self.mesh, "DG", 0)
             self.V2 = W.sub(1).collapse()
         self.v2d = vertex_to_dof_map(self.V1)
         self.dofmap1 = self.W.sub(0).dofmap()
@@ -274,33 +143,36 @@ class CahnHilliardL(NonlinearProblem):
 
 
         # Define trial and test functions
-        du    = TrialFunction(W)
-        q, v  = TestFunctions(W)
+        du   = TrialFunction(W)
+        q, v = TestFunctions(W)
 
         # Define functions
         u   = Function(W)  # current solution
         u0  = Function(W)  # solution from previous converged step
-        self.CurrSolFull, self.PrevSolFull = u, u0
+        u1  = Function(W)  # solution from one step before previous converged step
+
+        self.PrevSolFull = u0
+        self.CurrSolFull = u
+
 
         # Split mixed functions
         dc, dmu = split(du)
         c,  mu  = split(u)
         c0, mu0 = split(u0)
-        self.CurrSol, self.PrevSol = c, c0
 
-        # Create intial conditions and interpolate
+        # Create initial conditions and interpolate
         IC = eval(kwargs.get('IC'))
         ICParameters = kwargs.get('ICParameters',{})
         if isinstance(IC, np.ndarray):
             u.vector()[self.dofmap1.dofs()]  = IC
             u0.vector()[self.dofmap1.dofs()] = IC
         else:            
-            u_init = IC(**(ICParameters | {'degree':1}))
+            u_init = IC(**(ICParameters | {'degree': 1}))
             u.interpolate(u_init)
             u0 = u.copy(deepcopy=True)
         
         self.c_init, self.mu_init = u0.split(deepcopy=True)
-        # Solve auxiliary problem to determine m0, eta0 (eta0 part is untested)
+        # Solve auxiliary problem to determine m0
         if kwargs.get('autotune_mu0',False):
             u_V2 = Function(self.V1)
             u_V2.assign(self.c_init)
@@ -319,7 +191,6 @@ class CahnHilliardL(NonlinearProblem):
             if self.verbose:
                 print(f'Residue of calculated initial condition for mu is {m0_res}')
 
-
         ###-----------------------------------
         ### Weak statement of the equations
         ###-----------------------------------
@@ -330,6 +201,8 @@ class CahnHilliardL(NonlinearProblem):
         phi1 = self.phi1
         phi2 = self.phi2
         M    = self.M
+        Md   = self.Md
+        dt   = self.dt
         if self.fg_LinearSolve:
             ###----------------------------
             ### Linear case assembly
@@ -337,43 +210,39 @@ class CahnHilliardL(NonlinearProblem):
 
             self.set_LinSolver(**kwargs)
 
-            v1, v2  = TrialFunction(W)
+            v1, v2  = TrialFunctions(W)
             w1, w2  = TestFunctions(W)
 
-            K = v1*w1*dx + v2*w2*dx + (b1+b2)*dot(M(c0)*grad(v2), grad(w1))*dx - 2*v1*w2*dx - lmbda * dot(grad(v1), grad(w2))*dx 
-            self.StiffnessMatrix = assemble(K)
-            self._RHS = phi2(c0)*w2*dx
 
+            K = v1*w1*dx + dt*dot(M(c0)*grad(v2),grad(w1))*dx \
+              + (b1+b2)*v2*w2*dx - eval(sphi1.replace('x','v1'))*w2*dx - lmbda * dot(grad(v1), grad(w2))*dx
+            # import pdb; pdb.set_trace()    
+            self.StiffnessMatrix = assemble(K) 
+            self._RHS = c0*w1*dx + phi2(c0)*w2*dx 
 
             ### Initialize history term and modes (in numpy vector terms)
             v1m, w1m = TrialFunction(self.V1), TestFunction(self.V1)
             v2m, w2m = TrialFunction(self.V2), TestFunction(self.V2)
 
-            self.Modes      = np.zeros([len(self.dofmap1.dofs()), self.TS.nModes+1])
-            self.Modes[:,0] = assemble(c*w1m*dx).get_local()    
+            self.Modes      = np.zeros([len(self.dofmap2.dofs()), self.TS.nModes+1])
             self.History    = self.Modes @ self.TS.gamma_k
 
-            self.DiffusionMatrix  = assemble(dot(M(c0)*grad(v1m),grad(w1m))*dx)
-            self.MassMatrix2      = assemble(v2m*w2m*dx)
-            if   self.TS.Scheme[3:] == 'mIE':
-                self._Mmu  = (phi1(c) + phi2(c0))*w2m*dx + lmbda * dot(grad(c), grad(w2m))*dx
+            # Solve the suplementary equations from the system for Modes
+            self.Modes_EqS_Matrix    = assemble(v1m*w1m*dx) 
+            if   self.TS.Scheme[3:] == 'mIE': raise Exception('Not implemented!')
             elif self.TS.Scheme[3:] == 'mCN':
-                self._Mmu  = (phi1(c) + phi2(c))*w2m*dx + lmbda * dot(grad(c), grad(w2m))*dx
+                self.Modes_EqS_LF  = c0*w1m*dx - dt*dot(M(c)*grad(mu),grad(w1m))*dx
             else:
-                raise Exception('Unknown scheme!')
-            self.mu    = Function(self.V2)
-            self.mu0   = Function(self.V2)
-            self.mu.vector()[:]  = 0
-            self.mu0.vector()[:] = 0
-            self.mu0.vector().set_local(self.mu.vector()[:])
-            Mmu = assemble(self._Mmu)
-            self.LinSolver2.solve(self.MassMatrix2, self.mu.vector(), Mmu)
-            self._CurrFlux = dot(M(c0)*grad(mu), grad(w1m))*dx
-            self._PrevFlux = dot(M(c0)*grad(mu0), grad(w1m))*dx
-            F = dot(M(c0)*grad(v2m), grad(w1m))*dx
-            self.FluxMatrix = assemble(F)
-            self._FluxNorm  = dot(M(c0)*grad(self.mu), grad(self.mu))*dx
-
+                raise Exception('Unknown scheme! Please set "scheme" parameter in the format "RA:mIE" or "RA:mCN".')
+            self.c    = Function(self.V1)
+            self.c.vector().zero()
+            # Modes_EqS_RHS= assemble(self.Modes_EqS_LF)
+            # self.Modes_LinSolver.solve(self.Modes_EqS_Matrix, self.c.vector(), Modes_EqS_RHS)
+            # # Assign the newly calculated solution parts to u
+            # self.CurrSolFull.vector()[self.dofmap1.dofs()] = self.c.vector()[self.V1.dofmap().dofs()]
+            # self._CurrFlux = dot(M(c0)*grad(mu), grad(w1m))*dx
+            # self._PrevFlux = dot(M(c0)*grad(mu0), grad(w1m))*dx
+            self.Modes_Eq_muMatrix = assemble(v2m*w2m*dx)
 
         else:
             ###----------------------------
@@ -381,6 +250,7 @@ class CahnHilliardL(NonlinearProblem):
             ###----------------------------
 
             ### Solver
+            raise Exception('Nonlinear solution scheme is not implemented!')
             self.set_Solver(**kwargs)
 
             ### Potential term
@@ -443,39 +313,26 @@ class CahnHilliardL(NonlinearProblem):
     def J(self, A, x):
         assemble(self.Jacobian, tensor=A)
 
-    def update_history(self):
-        if self.scheme == 'L1':
-            alpha = self.alpha        
-            j  = len(self.TS.b)
-            bj = ((j+1)**(1-alpha) - j**(1-alpha)) / gamma(2-alpha)
-            self.TS.b = np.append(self.TS.b, bj)
-            coefs = np.append(-np.diff(self.TS.b)/self.TS.b[0], self.TS.b[-1]/self.TS.b[0])[::-1]
-
-            HistSolNew      = self.Model.multMass(self.CurrSol).copy(True) 
-            self.HistSol    = np.hstack([ self.HistSol,  HistSolNew.reshape([-1,1])])
-            self.History[:] = self.HistSol @ coefs
-
-            self.PrevSol[:] = self.CurrSol[:]
-            self.CurrF[:]   = self.Model.update_NonLinearPart(self.CurrSol, time=self.CurrTime)
-            self.PrevF[:]   = self.CurrF[:]
-        else: ### RA scheme
+    def update_history_and_s(self):
+        if self.scheme[:2] == 'RA': 
             if self.fg_LinearSolve:
-                c  = self.CurrSolFull.split(True)[0].vector()
-                c0 = self.PrevSolFull.split(True)[0].vector()
-                self.mu0.vector().set_local(self.mu.vector().get_local())
-                Mmu = assemble(self._Mmu)
-                self.LinSolver2.solve(self.MassMatrix2, self.mu.vector(), Mmu)
-                Flux1 = ( self.FluxMatrix*self.mu.vector()).get_local()
-                Flux2 = ( self.FluxMatrix*self.mu0.vector()).get_local()
+                Modes_EqS_RHS = assemble(self.Modes_EqS_LF)
+                self.Modes_LinSolver.solve(self.Modes_EqS_Matrix, self.c.vector(), Modes_EqS_RHS)
+                self.CurrSolFull.vector()[self.dofmap1.dofs()] = self.c.vector()[self.V1.dofmap().dofs()]
+                mu0 = self.PrevSolFull.split(True)[1].vector()
+                mu  = self.CurrSolFull.split(True)[1].vector()
                 g_k, b1_k, b2_k = self.TS.gamma_k, self.TS.beta1_k, self.TS.beta2_k
-                self.Modes[:]   = g_k*self.Modes - (b1_k*Flux1[:,None] + b2_k*Flux2[:,None])
+                self.Modes[:]   = g_k*self.Modes + b1_k*np.reshape(self.Modes_Eq_muMatrix*mu,(-1,1)) + b2_k*np.reshape(self.Modes_Eq_muMatrix*mu0,(-1,1))
                 self.History[:] = self.Modes @ g_k
             else:
-                F1 = assemble(self._CurrFlux).get_local()
-                F0 = assemble(self._PrevFlux).get_local()
-                g_k, b1_k, b2_k = self.TS.gamma_k, self.TS.beta1_k, self.TS.beta2_k
-                self.Modes[:]   = g_k*self.Modes - (b1_k*F1[:,None] + b2_k*F0[:,None])
-                self.History[:] = self.Modes @ g_k
+                raise Exception('Nonlinear solution scheme is not implemented!')
+        else:
+            raise Exception('Unknown time-stepping scheme. Please use RA:XXX or L1:XXX, with XXX being "mIE", "mCN"')
+            # F1 = assemble(self._CurrFlux).get_local()
+            # F0 = assemble(self._PrevFlux).get_local()
+            # g_k, b1_k, b2_k = self.TS.gamma_k, self.TS.beta1_k, self.TS.beta2_k
+            # self.Modes[:]   = g_k*self.Modes - (b1_k*F1[:,None] + b2_k*F0[:,None])
+            # self.History[:] = self.Modes @ g_k
 
     def __call__(self):
         u, u0 = self.CurrSolFull, self.PrevSolFull
@@ -489,17 +346,22 @@ class CahnHilliardL(NonlinearProblem):
         # Step in time
         if self.fg_LinearSolve:
             while self.TS.inc():    
+                # Shift the solution values one step back in time
                 u0.vector().set_local(u.vector().get_local())
-                RHS = assemble(self._RHS) 
-                RHS[self.dofmap1.dofs()] += self.History
+                # Update RHS of the system 
+                RHS = assemble(self._RHS)
+                RHS[self.dofmap2.dofs()] -= self.History
+                # Solve
                 self.LinSolver.solve(self.StiffnessMatrix, u.vector(), RHS)
-                self.update_history()
+                # Update history, modes and the cumulative itegral S0
+                self.update_history_and_s()
                 yield u.split(True)[0].vector()[:]
         else:
             while self.TS.inc():    
+                # Shift the solution values one step back in time
                 u0.vector().set_local(u.vector().get_local())
                 self.Solver.solve(self, u.vector())
-                self.update_history()
+                self.update_history_and_s()
                 yield u.split(True)[0].vector()[:]
     
     ### Solution iterator (time-integration)
@@ -545,13 +407,13 @@ class CahnHilliardL(NonlinearProblem):
         self.Solver.parameters["linear_solver"] = "lu"
         #self.Solver.parameters["linear_solver"] = "tfqm"
         #self.Solver.parameters["linear_solver"] = "richardson"
-        #self.Solver.parameters["linear_solver"] = "bicgstab"
+        # self.Solver.parameters["linear_solver"] = "bicgstab"
         #self.Solver.parameters["linear_solver"] = "cg"
         #self.Solver.parameters["linear_solver"] = "gmres"
         #self.Solver.parameters["linear_solver"] = "umfpack"
         #self.Solver.parameters["linear_solver"] = "mumps"
-        self.Solver.parameters["preconditioner"] = "default"
-        #self.Solver.parameters["preconditioner"] = "ilu"
+        # self.Solver.parameters["preconditioner"] = "default"
+        self.Solver.parameters["preconditioner"] = "ilu"
         #self.Solver.parameters["preconditioner"] = "hypre_euclid"
         #self.Solver.parameters["preconditioner"] = "sor"
         #self.Solver.parameters["preconditioner"] = "icc"
@@ -615,15 +477,16 @@ class CahnHilliardL(NonlinearProblem):
         # self.LinSolverMu.parameters["monitor_convergence"] = False
 
 
-        self.LinSolver2 = PETScLUSolver("mumps")
-        # self.LinSolver2 = PETScKrylovSolver("cg", "icc")
-        # self.LinSolver2.parameters["relative_tolerance"] = 1.e-12
-        # self.LinSolver2.parameters["absolute_tolerance"] = 1.e-12
-        # self.LinSolver2.parameters["nonzero_initial_guess"] = True
+        self.Modes_LinSolver = PETScLUSolver("mumps")
+        # self.Modes_LinSolver = PETScKrylovSolver("cg", "icc")
+        # self.Modes_LinSolver.parameters["relative_tolerance"] = 1.e-12
+        # self.Modes_LinSolver.parameters["absolute_tolerance"] = 1.e-12
+        # self.Modes_LinSolver.parameters["nonzero_initial_guess"] = True
 
 
 
-        self.LinSolverD = PETScKrylovSolver("cg", "icc")
+        self.LinSolverD = PETScKrylovSolver("gmres", "petsc_amg")
+        # self.LinSolverD = PETScKrylovSolver("cg", "icc")
 
 
 
@@ -635,43 +498,6 @@ class CahnHilliardL(NonlinearProblem):
     def Energy(self):
         return assemble(self._Energy, **self._fenics_assembly_pars )
 
-    @property
-    def HistoryEnergy(self):
-        if self.fg_LinearSolve:
-            d, c, c_inf = self.TS.RA.d, self.TS.RA.c, self.TS.RA.c_inf
-            g_k, b1_k, b2_k = self.TS.gamma_k, self.TS.beta1_k, self.TS.beta2_k
-            w = d/c #(1-g_k)/(b1_k) #d/c
-            f   = Function(self.V1)
-            v   = f.vector()
-            Muk = Vector(v)
-            mu  = self.CurrSolFull.split(True)[1].vector()
-            HistoryEnergy = 0
-            for k in range(self.TS.nModes):
-                Muk.set_local(self.Modes[:,k+1])
-                self.LinSolverD.solve(self.FluxMatrix, v, Muk)
-                # HistoryEnergy += d[k]/c[k] * 0.5*assemble(dot(grad(f),grad(f))*dx)
-                # HistoryEnergy += d[k]/c[k] * 0.5* v.inner(self.FluxMatrix*v)
-                HistoryEnergy += w[k] * 0.5* v.inner(Muk)
-            # HistoryEnergy += 0.5*c_inf*assemble(self._FluxNorm)
-            HistoryEnergy += 0.5*c_inf* mu.inner(self.FluxMatrix*mu)
-            return HistoryEnergy
-        else:
-            d, c, c_inf = self.TS.RA.d, self.TS.RA.c, self.TS.RA.c_inf
-            D   = self.DiffusionMatrix
-            f   = Function(self.W)
-            v   = f.vector()
-            Muk = Vector(v)
-            mu = self.CurrSolFull.sub(1)
-            FluxNorm = assemble(dot(grad(mu),grad(mu))*dx)
-            HistoryEnergy = 0
-            for k in range(self.TS.nModes):
-                Muk.set_local(self.Modes[:,k+1])
-                # Muk[:] = self.Modes[:,k+1]
-                solve(D, v, Muk)
-                HistoryEnergy += d[k]/c[k] * 0.5*assemble(dot(grad(f.sub(0)),grad(f.sub(0)))*dx, **self._fenics_assembly_pars )
-            # HistoryEnergy += 0.5*c_inf*assemble(self._FluxNorm)
-            HistoryEnergy += 0.5*c_inf*FluxNorm
-            return HistoryEnergy
 
     @property
     def Residual(self):
@@ -688,15 +514,6 @@ class CahnHilliardL(NonlinearProblem):
         # return self.Energy + self.HistoryEnergy
     
     @property
-    def EnergyModified(self):
-        return self.Energy + self.HistoryEnergy
-
-    @property
-    def EnergyGradNorm(self):
-        EGN = assemble(self._FluxNorm, **self._fenics_assembly_pars )
-        return EGN
-
-    @property
     def mass(self):
         return assemble(self._mass, **self._fenics_assembly_pars )
 
@@ -711,99 +528,4 @@ class CahnHilliardL(NonlinearProblem):
         norm_f = np.sqrt(sqr_norm_f)
         return norm_f
 
-
-#===========================================================
-#   Helpers
-#===========================================================
-
-class Exporter:
-
-    def __init__(self, ProblemObj, **kwargs):
-        self.ProblemObj = ProblemObj
-        self.Folder     = kwargs.get('ExportFolder', None)
-        self.FilePrefix = kwargs.get('FilePrefix', '')
-        self.name       = kwargs.get('Name', 'sol')
-        if self.Folder:
-            os.makedirs(self.Folder, exist_ok=True)
-            import pprint
-            from utils import save_dict2json
-            hash = save_dict2json(os.path.join(kwargs.get('ExportFolder', None),''),pprint.pformat(ProblemObj.config))
-            if self.FilePrefix.strip() == "":
-                self.FilePrefix = hash
-                if ProblemObj.verbose:
-                    print('Autogenerated export file prefix ("FilePrefix" parameter): ', hash) 
-            self.vtk_file = File(os.path.join(self.Folder, self.FilePrefix +'sol.pvd'), "compressed")
-
-    def test_export_every(self, export_every):
-        if export_every is None:
-            return True
-        else:
-            t = self.ProblemObj.TS.CurrTime
-            h = self.ProblemObj.TS.dt
-            tau  = export_every
-            test = ( t%tau <= h/2 or tau-t%tau < h/2)
-            return test
-
-    def export_iv_vtk(self):
-        phi0 =  self.ProblemObj.c_init
-        phi0.rename(self.name+'0','At t=0')
-        self.vtk_file << phi0
-
-    def export_step_vtk(self, **kwargs):
-        export_every = kwargs.get('export_every', None)
-        if self.test_export_every(export_every):
-            t = self.ProblemObj.TS.CurrTime
-            u = self.ProblemObj.CurrSolFull
-            u.rename(self.name,'')
-            self.vtk_file << (u.split()[0], t)
-
-    def export_step_npy(self, **kwargs):
-        export_every = kwargs.get('export_every', None)
-        field        = kwargs.get('field', self.ProblemObj.CurrSolFull.split()[0].vector()[:])
-        if self.test_export_every(export_every):
-            i = self.ProblemObj.TS.TimeStep
-            np.save(os.path.join(self.Folder,prefix+name + '_i={0:d}'.format(i)), field)
-
-    def export_npy(self, data, **kwargs):
-        np.save(os.path.join(self.Folder,self.FilePrefix + self.name + '.npy'))
-
-    def import_npy(self, **kwargs):
-        return np.load(os.path.join(self.Folder,self.FilePrefix + self.name + '.npy'))
-
-    def clear(self):
-        os.system('rm ' + self.Folder + '*' )
-
-
-
-
-
-#######################################################################################################
-#	Periodic boundary conditions
-#######################################################################################################
-
-class PeriodicBoundary(SubDomain):
-
-	def __init__(self, ndim):
-		SubDomain.__init__(self)
-		self.ndim = ndim
-
-	def inside(self, x, on_boundary):
-		return bool( 	any([ near(x[j], 0) for j in range(self.ndim) ]) and 
-					not any([ near(x[j], 1) for j in range(self.ndim) ]) and 
-						on_boundary
-					)
-
-	def map(self, x, y):
-		for j in range(self.ndim):
-			if near(x[j], 1):
-				y[j] = x[j] - 1
-			else:
-				y[j] = x[j]
-
-
-
-
-
-
-###########################################
 

@@ -128,9 +128,7 @@ def plot_all(QoIs_left,QoIs_right,alpha_val,time,save_at):
 
 
 def pvd_set_nearest_t(reader, t):
-    if str(t).strip().lower() == "all":
-        return reader.time_values
-    elif (t < 0):
+    if (t < 0):
         # Use the first time point 
         reader.set_active_time_point(0)
     elif isinf(float(t)):
@@ -146,19 +144,14 @@ def render_pvd2file_2d_color(filename, plottime, **kwargs):
     reader = pv.get_reader(filename)
     # Print available time values
     # print(reader.time_values)
-    times = pvd_set_nearest_t(reader,plottime)
-    # if not plottime:
-        # # Use the first time point 
-        # reader.set_active_time_point(0)
-    # else:
-        # import pdb; pdb.set_trace()    
-        # if isinf(float(plottime)):
-            # reader.set_active_time_point(reader.number_time_points-1)
-        # else:
-            # t_idx = np.abs(np.array(reader.time_values)-plottime).argmin()
-            # reader.set_active_time_point(t_idx)
-    for t in times:
-        print(f"Plotting data for t = {t:.3f}") 
+    if  str(plottime).strip().lower() == "all":
+        plottime = reader.time_values
+    elif not isinstance(plottime,list): 
+        plottime = [plottime]
+    plottime = sorted(set(plottime))
+    for to in plottime:
+        t = pvd_set_nearest_t(reader,to)
+        print(f"Plotting data for t = {t:.5e}") 
         mesh = reader.read()[0]
         reader.set_active_time_value(t)
         # Print available point data
@@ -186,9 +179,9 @@ def render_pvd2file_2d_color(filename, plottime, **kwargs):
         plotter.camera_position='xy'
         # plotter.background_color='white'
         # import pdb; pdb.set_trace()    
-        filetitle = kwargs.get('filetitle', "Solution at {:.4f}".format(reader.active_time_value))
+        filetitle = kwargs.get('filetitle', "Solution at {:.6f}".format(reader.active_time_value))
         prefix,_ = os.path.splitext(filename)
-        outputfile = kwargs.get('outputfile', "{:s}_t_{:.4f}".format(prefix,reader.active_time_value))
+        outputfile = kwargs.get('outputfile', "{:s}_t_{:.6f}".format(prefix,reader.active_time_value))
         outputformat = kwargs.get('outputformat', 'eps')
      
         plotter.save_graphic(outputfile + '.' + outputformat , title=filetitle)

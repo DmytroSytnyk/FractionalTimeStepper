@@ -23,21 +23,21 @@ from source.Models.CahnHilliardRModel import CahnHilliardR2
 
 config = {
 ### Model parameters:
-    'alpha'         :   0.5,
-    'FinalTime'     :   0.2,
+    'alpha'         :   0.3,
+    'FinalTime'     :   0.8,
     'scheme'        :   'RA:mCN',
 ### Format "XX:Y..Y"; XX = RA / L1 / GJ; 
 ##  for RA: Y..Y = mIE - modified Implicit Euler (theta=1), mCN - modified Crank-Nicolson
-    'nTimeSteps'    :   2**(12),
+    'nTimeSteps'    :   2**(10),
     'eps'           :   0.03,                                 ### surface parameter
-    # 'M'             :   '0.05',                               ### mobility
+    'M'             :   '0.05',                               ### mobility
     # 'Md'            :   '0.0',                                ### Derivative of mobility
-    'M'             :   'lambda x: (1 - x**2)**2',            ### mobility
-    'Md'            :   'lambda x: -4*x*(1 - x**2)',           ### Derivative of mobility
+    # 'M'             :   'lambda x: (1 - x**2)**2',             ### mobility
+    # 'Md'            :   'lambda x: -4*x*(1 - x**2)',           ### Derivative of mobility
     'Phi'           :   'lambda x: 0.25 * (1-x**2)**2',        ### potential
     'phi1'          :   'lambda x: 0.25 * (8 * x)',            ### convex part the potential derivative
     'phi2'          :   'lambda x: 0.25 * (4*x**3 - 12*x)',    ### concave part the potential derivative
-    'Nx'            :   2**6,
+    'Nx'            :   2**5,
     'LinSolve'      :   True,
     'autotune_mu0'  :   False,                                ### Make mu0 to satisfy second equation
     'verbose'       :   True,
@@ -49,6 +49,7 @@ config = {
     'export_every'  :   0.001, 
     'Name'          :   'phi',
 }
+
 config['IC']           =   'IC_FourBubbles'
 #config['ICParameters'] = {'eps': 0.03}    ### Optional parameters to IC
 # config['IC']           =   'IC_LinearCombination'
@@ -111,7 +112,7 @@ Rh = np.zeros(pb.TS.nTimeSteps+1) # Roughness
 Rs = np.zeros(pb.TS.nTimeSteps+1) # Roughness
 E0 = np.zeros(pb.TS.nTimeSteps+1) # energy (classical)
 Em = np.zeros(pb.TS.nTimeSteps+1) # modified energy (see the paper)
-Eh = np.zeros(pb.TS.nTimeSteps+1) # history energy (see the paper)
+Eh = np.zeros(pb.TS.nTimeSteps+1) # history energy (see the r
  
 if prefix := config['ExportFolder']:
     # Save initial value
@@ -129,7 +130,7 @@ try:
         # Em[i] = pb.EnergyModified
         # Eh[i] = pb.HistoryEnergy
         print(f"Time step {i}: {t[i]}")
-        print(f"   mass: {m[i]}, Energy: {E0[i]}, Roughness: {Rh[i]}")
+        print(f"   mass: {m[i]:>22}, Energy: {E0[i]:<22}, Roughness: {Rh[i]:>22}")
         if np.isnan([m[i],Rh[i],E0[i]]).any():
             raise Exception('Some of the characteristic quantities are NaN. Consider decreasing the time-step size.')
                            ### YOUR CODE: do something with u (solution approximation at t_i)
