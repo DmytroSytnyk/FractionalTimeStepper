@@ -101,6 +101,9 @@ class CahnHilliardR4(NonlinearProblem):
         else:
             self.Md = _Md
 
+        # Parameter of theta numerical scheme 
+        self.theta = kwargs.get('theta', 0.0)
+
         ### At the beginning the initial mass is unknown
         self.mass_init = float('nan')
 
@@ -142,21 +145,15 @@ class CahnHilliardR4(NonlinearProblem):
         self.dofmap2 = self.W.sub(1).dofmap()
 
 
-        # Define trial and test functions
-        du   = TrialFunction(W)
-        q, v = TestFunctions(W)
-
         # Define functions
         u   = Function(W)  # current solution
         u0  = Function(W)  # solution from previous converged step
-        u1  = Function(W)  # solution from one step before previous converged step
 
         self.PrevSolFull = u0
         self.CurrSolFull = u
 
 
         # Split mixed functions
-        dc, dmu = split(du)
         c,  mu  = split(u)
         c0, mu0 = split(u0)
 
@@ -214,81 +211,109 @@ class CahnHilliardR4(NonlinearProblem):
             w1, w2  = TestFunctions(W)
 
 
+            # Version 1
             K = v1*w1*dx + dt*dot(M(c0)*grad(v2),grad(w1))*dx \
               + (b1+b2)*v2*w2*dx - eval(sphi1.replace('x','v1'))*w2*dx - lmbda * dot(grad(v1), grad(w2))*dx
+            # Version 2
+            # K = v1*w1*dx \
+              # + (b1+b2)*v2*w2*dx - eval(sphi1.replace('x','v1'))*w2*dx - lmbda * dot(grad(v1), grad(w2))*dx
             # import pdb; pdb.set_trace()    
             self.StiffnessMatrix = assemble(K) 
+            # Version 1
             self._RHS = c0*w1*dx + phi2(c0)*w2*dx 
+            # Version 2
+            # self._RHS = c0*w1*dx + dt*dot(M(c0)*grad(mu0),grad(w1))*dx + phi2(c0)*w2*dx 
 
             ### Initialize history term and modes (in numpy vector terms)
             v1m, w1m = TrialFunction(self.V1), TestFunction(self.V1)
             v2m, w2m = TrialFunction(self.V2), TestFunction(self.V2)
 
-            self.Modes      = np.zeros([len(self.dofmap2.dofs()), self.TS.nModes+1])
+            # Version a
+            # self.Modes      = np.zeros([len(self.dofmap2.dofs()), self.TS.nModes+1])
+            # self.History    = self.Modes @ self.TS.gamma_k
+
+            # Solve the suplementary equations from the system for Modes
+            
+            # self.Modes_EqS_Matrix    = assemble(v1m*w1m*dx) 
+            # if   self.TS.Scheme[3:] == 'mIE': raise Exception('Not implemented!')
+            # elif self.TS.Scheme[3:] == 'mCN':
+                # self.Modes_EqS_LF  = c0*w1m*dx - dt*dot(M(c)*grad(mu),grad(w1m))*dx
+            # else:
+                # raise Exception('Unknown scheme! Please set "scheme" parameter in the format "RA:mIE" or "RA:mCN".')
+            # self.c    = Function(self.V1)
+            # self.c.vector().zero()
+            # # Modes_EqS_RHS= assemble(self.Modes_EqS_LF)
+            # # self.Modes_LinSolver.solve(self.Modes_EqS_Matrix, self.c.vector(), Modes_EqS_RHS)
+            # # # Assign the newly calculated solution parts to u
+            # # self.CurrSolFull.vector()[self.dofmap1.dofs()] = self.c.vector()[self.V1.dofmap().dofs()]
+            # # self._CurrFlux = dot(M(c0)*grad(mu), grad(w1m))*dx
+            # # self._PrevFlux = dot(M(c0)*grad(mu0), grad(w1m))*dx
+            # self.Modes_Eq_muMatrix = assemble(v2m*w2m*dx)
+
+            # Version b
+            self.Modes      = np.zeros([u.vector().get_local().size, self.TS.nModes+1])
             self.History    = self.Modes @ self.TS.gamma_k
 
             # Solve the suplementary equations from the system for Modes
-            self.Modes_EqS_Matrix    = assemble(v1m*w1m*dx) 
+            
+            # To makes the system properly defined we add the diagonal identity matrix with respect to the second variable
+            self.Modes_EqS_Matrix    = v1*w1*dx + dt*dot(M(c)*grad(v2),grad(w1))*dx \
+                  + (b1+b2)*v2*w2*dx - eval(sphi1.replace('x','v1'))*w2*dx - lmbda * dot(grad(v1), grad(w2))*dx
             if   self.TS.Scheme[3:] == 'mIE': raise Exception('Not implemented!')
             elif self.TS.Scheme[3:] == 'mCN':
-                self.Modes_EqS_LF  = c0*w1m*dx - dt*dot(M(c)*grad(mu),grad(w1m))*dx
+                self.Modes_EqS_LF  = c0*w1*dx + phi2(c0)*w2*dx 
             else:
                 raise Exception('Unknown scheme! Please set "scheme" parameter in the format "RA:mIE" or "RA:mCN".')
-            self.c    = Function(self.V1)
-            self.c.vector().zero()
-            # Modes_EqS_RHS= assemble(self.Modes_EqS_LF)
-            # self.Modes_LinSolver.solve(self.Modes_EqS_Matrix, self.c.vector(), Modes_EqS_RHS)
-            # # Assign the newly calculated solution parts to u
-            # self.CurrSolFull.vector()[self.dofmap1.dofs()] = self.c.vector()[self.V1.dofmap().dofs()]
-            # self._CurrFlux = dot(M(c0)*grad(mu), grad(w1m))*dx
-            # self._PrevFlux = dot(M(c0)*grad(mu0), grad(w1m))*dx
-            self.Modes_Eq_muMatrix = assemble(v2m*w2m*dx)
-
+            self.Modes_Eq_muMatrix = assemble(v2*w2*dx)
+            self.Modes_u    = Function(self.W)
+            self.Modes_u.vector().zero()
         else:
             ###----------------------------
             ### General case assembly
             ###----------------------------
 
+
+            # Define trial and test functions
+            v1, v2  = TrialFunctions(W)
+            w1, w2  = TestFunctions(W)
+
+            du   = TrialFunction(W)
+            # q, v = TestFunctions(W)
+            # dc, dmu = split(du)
+
             ### Solver
-            raise Exception('Nonlinear solution scheme is not implemented!')
+            # raise Exception('Nonlinear solution scheme is not implemented!')
             self.set_Solver(**kwargs)
 
-            ### Potential term
-            P = phi1(c)*v*dx + phi2(c0)*v*dx  + lmbda * dot(grad(c), grad(v))*dx
-            # P = phi1(c)*v*dx + phi2(c)*v*dx  + lmbda * dot(grad(c), grad(v))*dx
-
-
-            self._CurrFlux = dot(grad(M(c)*mu ), grad(q))*dx
-            self._PrevFlux = dot(grad(M(c0)*mu0), grad(q))*dx
+            self._CurrFlux = dot(grad(M(c)*mu ), grad(w1))*dx
+            self._PrevFlux = dot(grad(M(c0)*mu0), grad(w1))*dx
 
             b1, b2 = self.TS.beta1, self.TS.beta2
-            Eq1 = c*q*dx + (b1+b2)*self._CurrFlux #+ b2*self._PrevFlux ### c0 goes to History term
-            # b = self.TS.beta
-            # Eq1 = c*q*dx + b*self._CurrFlux
-            Eq2 = mu*v*dx - P
+            Eq1 = (c-c0)*w1*dx + Constant(dt*self.theta)*dot(grad(M(c)*mu), grad(w1))*dx \
+                    + Constant(dt*(1-self.theta))*dot(grad(M(c0)*mu), grad(w1))*dx 
+            Eq2 = (b1+b2)*mu*w2*dx - phi1(c)*w2*dx - phi2(c0)*w2*dx  - lmbda * dot(grad(c), grad(w2))*dx
             self._Residual = Eq1 + Eq2  ### without history term
 
             # Compute directional derivative about u in the direction of du (Jacobian)
             self.Jacobian = derivative(self._Residual, u, du)
 
             ### Init history term and modes (in numpy vector terms)
+            # v1m, w1m = TrialFunction(self.V1), TestFunction(self.V1)
+            # v2m, w2m = TrialFunction(self.V2), TestFunction(self.V2)
+
             self.Modes      = np.zeros([u.vector().get_local().size, self.TS.nModes+1])
-            self.Modes[:,0] = assemble(c*q*dx).get_local()        
             self.History    = self.Modes @ self.TS.gamma_k
 
-            mu, v = TrialFunction(self.V2), TestFunction(self.V2)
-            self._ModalRHS  = (phi1(c) + phi2(c))*v*dx + lmbda * dot(grad(c), grad(v))*dx
-            self.MassMatrixMu = assemble(mu*v*dx)
-            # self.LinSolverMu.set_operator(self.MassMatrixMu)
-            self.mu = Function(self.V2)
-
-            v1m, v2m  = TrialFunction(W)
-            w1m, w2m  = TestFunctions(W)
-
-            #NOTE! Something strange is going on here. Is this only needed to calculate HistoryEnergy?
-            self.DiffusionMatrix = assemble(dot(M(c)*grad(v1m),grad(w1m))*dx + dot(M(c)*grad(v2m),grad(w2m))*dx)
-            self._FluxNorm = dot(M(c)*grad(mu), grad(mu))*dx
-
+            # To makes the system properly defined we add the diagonal identity matrix with respect to the second variable
+            self.Modes_EqS_Matrix    = assemble(v1*w1*dx + v2*w2*dx) 
+            if   self.TS.Scheme[3:] == 'mIE': raise Exception('Not implemented!')
+            elif self.TS.Scheme[3:] == 'mCN':
+                self.Modes_EqS_LF  = c0*w1*dx - Constant(dt)*dot(grad(M(c)*mu ), grad(w1))*dx
+            else:
+                raise Exception('Unknown scheme! Please set "scheme" parameter in the format "RA:mIE" or "RA:mCN".')
+            self.Modes_Eq_muMatrix = assemble(v2*w2*dx)
+            self.Modes_u    = Function(self.W)
+            self.Modes_u.vector().zero()
         ###----------------------------------------------------------
         
         ### Other quantities
@@ -308,31 +333,50 @@ class CahnHilliardR4(NonlinearProblem):
 
     def F(self, b, x):
         assemble(self._Residual, tensor=b)
-        b[:] = b - self.History
+        # import pdb; pdb.set_trace()    
+        b[:] = b[:] + self.History
 
     def J(self, A, x):
         assemble(self.Jacobian, tensor=A)
 
-    def update_history_and_s(self):
+    def update_history(self):
         if self.scheme[:2] == 'RA': 
             if self.fg_LinearSolve:
+                # Version a
+                # Modes_EqS_RHS = assemble(self.Modes_EqS_LF)
+                # self.Modes_LinSolver.solve(self.Modes_EqS_Matrix, self.c.vector(), Modes_EqS_RHS)
+                # self.CurrSolFull.vector()[self.dofmap1.dofs()] = self.c.vector()[self.V1.dofmap().dofs()]
+                # mu0 = self.PrevSolFull.split(True)[1].vector()
+                # mu  = self.CurrSolFull.split(True)[1].vector()
+                # g_k, b1_k, b2_k = self.TS.gamma_k, self.TS.beta1_k, self.TS.beta2_k
+                # self.Modes[:]   = g_k*self.Modes + b1_k*np.reshape(self.Modes_Eq_muMatrix*mu,(-1,1)) + b2_k*np.reshape(self.Modes_Eq_muMatrix*mu0,(-1,1))
+
+                # Version b
                 Modes_EqS_RHS = assemble(self.Modes_EqS_LF)
-                self.Modes_LinSolver.solve(self.Modes_EqS_Matrix, self.c.vector(), Modes_EqS_RHS)
-                self.CurrSolFull.vector()[self.dofmap1.dofs()] = self.c.vector()[self.V1.dofmap().dofs()]
-                mu0 = self.PrevSolFull.split(True)[1].vector()
-                mu  = self.CurrSolFull.split(True)[1].vector()
+                Modes_EqS_RHS[:] -= self.History
+                self.Modes_LinSolver.solve(assemble(self.Modes_EqS_Matrix), self.CurrSolFull.vector(), Modes_EqS_RHS)
+                u0 = self.PrevSolFull.vector()
+                u  = self.CurrSolFull.vector()
                 g_k, b1_k, b2_k = self.TS.gamma_k, self.TS.beta1_k, self.TS.beta2_k
-                self.Modes[:]   = g_k*self.Modes + b1_k*np.reshape(self.Modes_Eq_muMatrix*mu,(-1,1)) + b2_k*np.reshape(self.Modes_Eq_muMatrix*mu0,(-1,1))
+                # import pdb; pdb.set_trace()    
+                self.Modes[:]   = g_k*self.Modes + b1_k*np.reshape(self.Modes_Eq_muMatrix*u,(-1,1)) + b2_k*np.reshape(self.Modes_Eq_muMatrix*u0,(-1,1))
                 self.History[:] = self.Modes @ g_k
             else:
-                raise Exception('Nonlinear solution scheme is not implemented!')
+                # raise Exception('Nonlinear solution scheme is not implemented!')
+                if self.theta < 1:
+                    # import pdb; pdb.set_trace()    
+                    Modes_EqS_RHS = assemble(self.Modes_EqS_LF)
+                    self.Modes_LinSolver.solve(self.Modes_EqS_Matrix, self.Modes_u.vector(), Modes_EqS_RHS)
+                    # self.CurrSolFull.vector()[:] = self.Modes_u.vector()[:]
+                    self.CurrSolFull.vector()[self.dofmap1.dofs()] = self.Modes_u.vector()[self.dofmap1.dofs()]
+                u0 = self.PrevSolFull.vector()
+                u  = self.CurrSolFull.vector()
+                g_k, b1_k, b2_k = self.TS.gamma_k, self.TS.beta1_k, self.TS.beta2_k
+                # import pdb; pdb.set_trace()    
+                self.Modes[:]   = g_k*self.Modes + b1_k*np.reshape(self.Modes_Eq_muMatrix*u,(-1,1)) + b2_k*np.reshape(self.Modes_Eq_muMatrix*u0,(-1,1))
+                self.History[:] = self.Modes @ g_k
         else:
             raise Exception('Unknown time-stepping scheme. Please use RA:XXX or L1:XXX, with XXX being "mIE", "mCN"')
-            # F1 = assemble(self._CurrFlux).get_local()
-            # F0 = assemble(self._PrevFlux).get_local()
-            # g_k, b1_k, b2_k = self.TS.gamma_k, self.TS.beta1_k, self.TS.beta2_k
-            # self.Modes[:]   = g_k*self.Modes - (b1_k*F1[:,None] + b2_k*F0[:,None])
-            # self.History[:] = self.Modes @ g_k
 
     def __call__(self):
         u, u0 = self.CurrSolFull, self.PrevSolFull
@@ -349,19 +393,23 @@ class CahnHilliardR4(NonlinearProblem):
                 # Shift the solution values one step back in time
                 u0.vector().set_local(u.vector().get_local())
                 # Update RHS of the system 
+                # Version a
+                # RHS = assemble(self._RHS)
+                # RHS[self.dofmap2.dofs()] -= self.History
+                # Version b
                 RHS = assemble(self._RHS)
-                RHS[self.dofmap2.dofs()] -= self.History
+                RHS[:] -= self.History
                 # Solve
                 self.LinSolver.solve(self.StiffnessMatrix, u.vector(), RHS)
                 # Update history, modes and the cumulative itegral S0
-                self.update_history_and_s()
+                self.update_history()
                 yield u.split(True)[0].vector()[:]
         else:
             while self.TS.inc():    
                 # Shift the solution values one step back in time
                 u0.vector().set_local(u.vector().get_local())
                 self.Solver.solve(self, u.vector())
-                self.update_history_and_s()
+                self.update_history()
                 yield u.split(True)[0].vector()[:]
     
     ### Solution iterator (time-integration)
@@ -402,18 +450,18 @@ class CahnHilliardR4(NonlinearProblem):
         # proved to be working:
         # newtonls
         # newtontr
-        self.Solver = PETScSNESSolver('newtontr')
-        #self.Solver = NewtonSolver()
-        self.Solver.parameters["linear_solver"] = "lu"
+        self.Solver = PETScSNESSolver('newtonls')
+        # self.Solver = NewtonSolver()
+        # self.Solver.parameters["linear_solver"] = "lu"
         #self.Solver.parameters["linear_solver"] = "tfqm"
         #self.Solver.parameters["linear_solver"] = "richardson"
         # self.Solver.parameters["linear_solver"] = "bicgstab"
         #self.Solver.parameters["linear_solver"] = "cg"
         #self.Solver.parameters["linear_solver"] = "gmres"
         #self.Solver.parameters["linear_solver"] = "umfpack"
-        #self.Solver.parameters["linear_solver"] = "mumps"
-        # self.Solver.parameters["preconditioner"] = "default"
-        self.Solver.parameters["preconditioner"] = "ilu"
+        self.Solver.parameters["linear_solver"] = "mumps"
+        self.Solver.parameters["preconditioner"] = "default"
+        # self.Solver.parameters["preconditioner"] = "ilu"
         #self.Solver.parameters["preconditioner"] = "hypre_euclid"
         #self.Solver.parameters["preconditioner"] = "sor"
         #self.Solver.parameters["preconditioner"] = "icc"
@@ -424,15 +472,16 @@ class CahnHilliardR4(NonlinearProblem):
         #self.Solver.parameters["convergence_criterion"] = "residual" #"incremental"
         #self.Solver.parameters["convergence_criterion"] ="incremental" #"residual" #"incremental"
         self.Solver.parameters["maximum_iterations"] = 1000
-        self.Solver.parameters["relative_tolerance"] = 1e-6
+        self.Solver.parameters["relative_tolerance"] = 1e-14
         #self.Solver.parameters["krylov_solver"]["nonzero_initial_guess"] = True
-        self.Solver.parameters["absolute_tolerance"] = 1.e-8
+        self.Solver.parameters["absolute_tolerance"] = 1e-14
         # self.Solver.parameters["error_on_nonconvergence"] = True
         self.Solver.parameters["report"] = self.verbose
 
         ### Linear solver
         # LinSolver = PETScKrylovSolver("cg", "amg")
-        LinSolver = PETScLUSolver("mumps")
+        # LinSolver = PETScLUSolver("mumps")
+        self.Modes_LinSolver = PETScLUSolver("mumps")
         # LinSolver = PETScKrylovSolver("gmres", "ilu")
         # # LinSolver = PETScKrylovSolver("cg", "amg")
         # LinSolver.parameters["maximum_iterations"] = 1000
@@ -441,15 +490,8 @@ class CahnHilliardR4(NonlinearProblem):
         # LinSolver.parameters["error_on_nonconvergence"] = True
         # LinSolver.parameters["nonzero_initial_guess"] = True
         # LinSolver.parameters["monitor_convergence"] = False
-        self.LinSolver  = LinSolver
+        # self.LinSolver  = LinSolver
 
-        self.LinSolverMu = PETScLUSolver("mumps") #PETScKrylovSolver("cg", "icc")
-        # self.LinSolverMu.parameters["maximum_iterations"] = 1000
-        # self.LinSolverMu.parameters["relative_tolerance"] = 1.e-10
-        # self.LinSolverMu.parameters["absolute_tolerance"] = 1.e-8
-        # self.LinSolverMu.parameters["error_on_nonconvergence"] = True
-        # self.LinSolverMu.parameters["nonzero_initial_guess"] = True
-        # self.LinSolverMu.parameters["monitor_convergence"] = False
 
 
     #----------------------------------------

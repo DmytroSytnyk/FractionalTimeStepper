@@ -340,7 +340,8 @@ class CahnHilliardL(NonlinearProblem):
             v1, v2  = TrialFunction(W)
             w1, w2  = TestFunctions(W)
 
-            K = v1*w1*dx + v2*w2*dx + (b1+b2)*dot(M(c0)*grad(v2), grad(w1))*dx - 2*v1*w2*dx - lmbda * dot(grad(v1), grad(w2))*dx 
+            K = v1*w1*dx + v2*w2*dx + (b1+b2)*dot(M(c0)*grad(v2), grad(w1))*dx \
+                    - eval(sphi1.replace('x','v1'))*w2*dx - lmbda * dot(grad(v1), grad(w2))*dx 
             self.StiffnessMatrix = assemble(K)
             self._RHS = phi2(c0)*w2*dx
 

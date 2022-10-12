@@ -28,17 +28,18 @@ config = {
     'scheme'        :   'RA:mCN',
 ### Format "XX:Y..Y"; XX = RA / L1 / GJ; 
 ##  for RA: Y..Y = mIE - modified Implicit Euler (theta=1), mCN - modified Crank-Nicolson
-    'nTimeSteps'    :   2**(17),
+    'nTimeSteps'    :   2**(15),
     'eps'           :   0.03,                                ### surface parameter
-    # 'M'             :   '0.05',                              ### mobility
+    'M'             :   '0.05',                              ### mobility
     # 'Md'            :   '0.0',                             ### Derivative of mobility
-    'M'             :   'lambda x: (1 - x**2)**2',         ### mobility
+    # 'M'             :   'lambda x: (1 - x**2)**2',         ### mobility
     # 'Md'            :   'lambda x: -4*x*(1 - x**2)',       ### Derivative of mobility
     'Phi'           :   'lambda x: 0.25 * (1-x**2)**2',      ### potential
     'phi1'          :   'lambda x: 0.25 * (8 * x)',          ### convex part the potential derivative
     'phi2'          :   'lambda x: 0.25 * (4*x**3 - 12*x)',  ### concave part the potential derivative
     'Nx'            :   2**5,
     'LinSolve'      :   True,
+    'theta'         :   0,
     'autotune_mu0'  :   True,                               ### Make mu0 to satisfy second equation
     'verbose'       :   True,
 ### RA parameters:

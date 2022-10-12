@@ -31,7 +31,7 @@ config = {
     'nTimeSteps'    :   2**(17),
     'eps'           :   0.03,                                ### surface parameter
     # 'M'             :   '0.05',                              ### mobility
-    'M'             :   'lambda x: (1 - x**2)**2',         ### mobility
+    'M'             :   'lambda x: (1 - x**2)**2 + 1e-4',         ### mobility
     'Phi'           :   'lambda x: 0.25 * (1-x**2)**2',      ### potential
     'phi1'          :   'lambda x: 0.25 * (8 * x)',          ### convex part the potential derivative
     'phi2'          :   'lambda x: 0.25 * (4*x**3 - 12*x)',  ### concave part the potential derivative
