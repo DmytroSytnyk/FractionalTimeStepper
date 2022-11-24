@@ -36,6 +36,7 @@ parameters["form_compiler"]["cpp_optimize_flags"] = "-O3 -ffast-math -march=nati
 from .CahnHilliardR1 import CahnHilliardR1 
 from .CahnHilliardR2 import CahnHilliardR2 
 from .CahnHilliardR4 import CahnHilliardR4 
+from .CahnHilliardR5 import CahnHilliardR5 
 
 
 

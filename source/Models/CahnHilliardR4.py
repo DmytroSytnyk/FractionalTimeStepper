@@ -33,7 +33,7 @@ class CahnHilliardR4(NonlinearProblem):
     def __init__(self, **kwargs):
         NonlinearProblem.__init__(self)
         # Save config before it get's modified
-        self.config = kwargs
+        self.config = kwargs.copy()
         # Add class name to config dictionary so that the output data can be easily distinguished
         self.config['Name'] = self.__class__.__name__
 
@@ -228,40 +228,15 @@ class CahnHilliardR4(NonlinearProblem):
             v1m, w1m = TrialFunction(self.V1), TestFunction(self.V1)
             v2m, w2m = TrialFunction(self.V2), TestFunction(self.V2)
 
-            # Version a
-            # self.Modes      = np.zeros([len(self.dofmap2.dofs()), self.TS.nModes+1])
-            # self.History    = self.Modes @ self.TS.gamma_k
-
-            # Solve the suplementary equations from the system for Modes
-            
-            # self.Modes_EqS_Matrix    = assemble(v1m*w1m*dx) 
-            # if   self.TS.Scheme[3:] == 'mIE': raise Exception('Not implemented!')
-            # elif self.TS.Scheme[3:] == 'mCN':
-                # self.Modes_EqS_LF  = c0*w1m*dx - dt*dot(M(c)*grad(mu),grad(w1m))*dx
-            # else:
-                # raise Exception('Unknown scheme! Please set "scheme" parameter in the format "RA:mIE" or "RA:mCN".')
-            # self.c    = Function(self.V1)
-            # self.c.vector().zero()
-            # # Modes_EqS_RHS= assemble(self.Modes_EqS_LF)
-            # # self.Modes_LinSolver.solve(self.Modes_EqS_Matrix, self.c.vector(), Modes_EqS_RHS)
-            # # # Assign the newly calculated solution parts to u
-            # # self.CurrSolFull.vector()[self.dofmap1.dofs()] = self.c.vector()[self.V1.dofmap().dofs()]
-            # # self._CurrFlux = dot(M(c0)*grad(mu), grad(w1m))*dx
-            # # self._PrevFlux = dot(M(c0)*grad(mu0), grad(w1m))*dx
-            # self.Modes_Eq_muMatrix = assemble(v2m*w2m*dx)
-
-            # Version b
             self.Modes      = np.zeros([u.vector().get_local().size, self.TS.nModes+1])
             self.History    = self.Modes @ self.TS.gamma_k
 
-            # Solve the suplementary equations from the system for Modes
-            
+            # Define suplementary equations for Modes
             # To makes the system properly defined we add the diagonal identity matrix with respect to the second variable
-            self.Modes_EqS_Matrix    = v1*w1*dx + dt*dot(M(c)*grad(v2),grad(w1))*dx \
-                  + (b1+b2)*v2*w2*dx - eval(sphi1.replace('x','v1'))*w2*dx - lmbda * dot(grad(v1), grad(w2))*dx
+            self.Modes_EqS_Matrix    = v1*w1*dx + v2*w2*dx
             if   self.TS.Scheme[3:] == 'mIE': raise Exception('Not implemented!')
             elif self.TS.Scheme[3:] == 'mCN':
-                self.Modes_EqS_LF  = c0*w1*dx + phi2(c0)*w2*dx 
+                self.Modes_EqS_LF  = c0*w1*dx - dt*dot(M(c)*grad(mu),grad(w1))*dx
             else:
                 raise Exception('Unknown scheme! Please set "scheme" parameter in the format "RA:mIE" or "RA:mCN".')
             self.Modes_Eq_muMatrix = assemble(v2*w2*dx)
@@ -304,7 +279,9 @@ class CahnHilliardR4(NonlinearProblem):
             self.Modes      = np.zeros([u.vector().get_local().size, self.TS.nModes+1])
             self.History    = self.Modes @ self.TS.gamma_k
 
-            # To makes the system properly defined we add the diagonal identity matrix with respect to the second variable
+            # Define suplementary equations for Modes
+            # To makes the system properly defined we add the diagonal identity matrix 
+            # with respect to the second variable
             self.Modes_EqS_Matrix    = assemble(v1*w1*dx + v2*w2*dx) 
             if   self.TS.Scheme[3:] == 'mIE': raise Exception('Not implemented!')
             elif self.TS.Scheme[3:] == 'mCN':
@@ -342,21 +319,12 @@ class CahnHilliardR4(NonlinearProblem):
     def update_history(self):
         if self.scheme[:2] == 'RA': 
             if self.fg_LinearSolve:
-                # Version a
-                # Modes_EqS_RHS = assemble(self.Modes_EqS_LF)
-                # self.Modes_LinSolver.solve(self.Modes_EqS_Matrix, self.c.vector(), Modes_EqS_RHS)
-                # self.CurrSolFull.vector()[self.dofmap1.dofs()] = self.c.vector()[self.V1.dofmap().dofs()]
-                # mu0 = self.PrevSolFull.split(True)[1].vector()
-                # mu  = self.CurrSolFull.split(True)[1].vector()
-                # g_k, b1_k, b2_k = self.TS.gamma_k, self.TS.beta1_k, self.TS.beta2_k
-                # self.Modes[:]   = g_k*self.Modes + b1_k*np.reshape(self.Modes_Eq_muMatrix*mu,(-1,1)) + b2_k*np.reshape(self.Modes_Eq_muMatrix*mu0,(-1,1))
-
-                # Version b
                 Modes_EqS_RHS = assemble(self.Modes_EqS_LF)
-                Modes_EqS_RHS[:] -= self.History
-                self.Modes_LinSolver.solve(assemble(self.Modes_EqS_Matrix), self.CurrSolFull.vector(), Modes_EqS_RHS)
-                u0 = self.PrevSolFull.vector()
-                u  = self.CurrSolFull.vector()
+                self.Modes_LinSolver.solve(assemble(self.Modes_EqS_Matrix), self.Modes_u.vector(), Modes_EqS_RHS)
+                # Copy only DOFs that are relevant to the solution of the suplementary Mode equation
+                self.CurrSolFull.vector()[self.dofmap1.dofs()] = self.Modes_u.vector()[self.dofmap1.dofs()]
+                u0 = self.PrevSolFull.vector().get_local()
+                u  = self.CurrSolFull.vector().get_local()
                 g_k, b1_k, b2_k = self.TS.gamma_k, self.TS.beta1_k, self.TS.beta2_k
                 # import pdb; pdb.set_trace()    
                 self.Modes[:]   = g_k*self.Modes + b1_k*np.reshape(self.Modes_Eq_muMatrix*u,(-1,1)) + b2_k*np.reshape(self.Modes_Eq_muMatrix*u0,(-1,1))
@@ -393,10 +361,6 @@ class CahnHilliardR4(NonlinearProblem):
                 # Shift the solution values one step back in time
                 u0.vector().set_local(u.vector().get_local())
                 # Update RHS of the system 
-                # Version a
-                # RHS = assemble(self._RHS)
-                # RHS[self.dofmap2.dofs()] -= self.History
-                # Version b
                 RHS = assemble(self._RHS)
                 RHS[:] -= self.History
                 # Solve

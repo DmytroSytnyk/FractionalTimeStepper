@@ -114,7 +114,16 @@ Rs = np.zeros(pb.TS.nTimeSteps+1) # Roughness
 E0 = np.zeros(pb.TS.nTimeSteps+1) # energy (classical)
 Em = np.zeros(pb.TS.nTimeSteps+1) # modified energy (see the paper)
 Eh = np.zeros(pb.TS.nTimeSteps+1) # history energy (see the r
- 
+# Make sure that only calculated values are plotted when computation
+# is interrupted
+t.fill(np.nan) 
+m.fill(np.nan) 
+Rh.fill(np.nan) 
+Rs.fill(np.nan) 
+E0.fill(np.nan) 
+Em.fill(np.nan) 
+Eh.fill(np.nan) 
+
 if prefix := config['ExportFolder']:
     # Save initial value
     pb.Exporter.export_iv_vtk()
@@ -146,7 +155,7 @@ finally:
     #       Plots
     ####################################
 
-
+    T = config['FinalTime']
     plt.figure("Mass evolution")
     plt.plot(t,m)
     plt.title("Mass evolution")
@@ -154,6 +163,7 @@ finally:
     plt.ylabel("mass")
     plt.grid(True)
     plt.savefig(os.path.join(config['ExportFolder'], pb.Exporter.FilePrefix + '_Mass.png'))
+    plt.xlim([0, T]) 
     # plt.show()
 
     plt.figure("Energy evolution")
@@ -163,6 +173,7 @@ finally:
     plt.ylabel("Energy")
     plt.grid(True)
     plt.savefig(os.path.join(config['ExportFolder'], pb.Exporter.FilePrefix + '_Energy.png'))
+    plt.xlim([0, T]) 
 
     #NOTE! Residual is not working properly yet
     # plt.figure("Residual of stationary part")

@@ -140,9 +140,8 @@ class IC_RandomField(UserExpression):
     def eval(self, values, x):
         values[0] = self.eps*(self.c - random.random()) #ICSmooth(x, 0.2501)
         values[1] = 0.0 
-        values[2] = 0.0 
     def value_shape(self):
-        return(3,)
+        return(2,)
 
 class IC_LinearCombination(UserExpression):
     def __init__(self, **kwargs):
@@ -160,7 +159,7 @@ class IC_LinearCombination(UserExpression):
                 raise Exception(f'IC {_IC} is unknows. Use one of {IC_Names}')
         super().__init__(**kwargs)
     def eval(self, values, x):
-        values[0] = 0; values[1] = 0; values[2] = 0
+        values[0] = 0; values[1] = 0 
         v = values.copy()
         for i,IC in enumerate(self.ICs):
             IC.eval(v,x)
@@ -369,10 +368,10 @@ class CahnHilliardL(NonlinearProblem):
             self.mu0.vector().set_local(self.mu.vector()[:])
             Mmu = assemble(self._Mmu)
             self.LinSolver2.solve(self.MassMatrix2, self.mu.vector(), Mmu)
-            self._CurrFlux = dot(M(c0)*grad(mu), grad(w1m))*dx
+            self._CurrFlux = dot(M(c)*grad(mu), grad(w1m))*dx
             self._PrevFlux = dot(M(c0)*grad(mu0), grad(w1m))*dx
             F = dot(M(c0)*grad(v2m), grad(w1m))*dx
-            self.FluxMatrix = assemble(F)
+            # self.FluxMatrix = assemble(F)
             self._FluxNorm  = dot(M(c0)*grad(self.mu), grad(self.mu))*dx
 
 
@@ -466,8 +465,10 @@ class CahnHilliardL(NonlinearProblem):
                 self.mu0.vector().set_local(self.mu.vector().get_local())
                 Mmu = assemble(self._Mmu)
                 self.LinSolver2.solve(self.MassMatrix2, self.mu.vector(), Mmu)
-                Flux1 = ( self.FluxMatrix*self.mu.vector()).get_local()
-                Flux2 = ( self.FluxMatrix*self.mu0.vector()).get_local()
+                self.CurrSolFull.vector()[self.dofmap2.dofs()] = self.mu.vector()[self.V2.dofmap().dofs()]
+
+                Flux1 = assemble(self._CurrFlux).get_local()
+                Flux2 = assemble(self._PrevFlux).get_local()
                 g_k, b1_k, b2_k = self.TS.gamma_k, self.TS.beta1_k, self.TS.beta2_k
                 self.Modes[:]   = g_k*self.Modes - (b1_k*Flux1[:,None] + b2_k*Flux2[:,None])
                 self.History[:] = self.Modes @ g_k
